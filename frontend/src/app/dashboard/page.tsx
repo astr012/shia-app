@@ -261,15 +261,43 @@ export default function DashboardPage() {
         {!isReachable ? (
           /* ── OFFLINE STATE ── */
           <motion.div
-            className="text-center py-24 border border-white/10"
+            className="text-center py-16 border border-white/10"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
           >
             <WifiOff size={48} className="mx-auto mb-4 text-red-500/60" />
             <p className="font-pixel text-2xl text-red-400">BACKEND UNREACHABLE</p>
-            <p className="font-mono text-xs text-gray-500 mt-2">
-              Start the backend: <code className="text-matrix">uvicorn app.main:app --reload</code>
-            </p>
+
+            {typeof window !== 'undefined' && !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1') ? (
+              /* ── Deployed (Vercel / production) ── */
+              <div className="mt-4 max-w-lg mx-auto">
+                <p className="font-mono text-xs text-gray-400 leading-relaxed">
+                  This dashboard monitors a <span className="text-matrix">local backend</span> running on your machine.
+                  It is not available on cloud deployments.
+                </p>
+                <div className="border border-white/10 bg-black/50 p-4 mt-4 text-left">
+                  <p className="text-[10px] uppercase text-gray-500 font-bold tracking-wider mb-2">TO USE THIS DASHBOARD:</p>
+                  <ol className="text-xs text-gray-400 font-mono space-y-2 list-decimal list-inside">
+                    <li>Clone the repo and run the backend locally</li>
+                    <li>Start: <code className="text-matrix">uvicorn app.main:app --reload</code></li>
+                    <li>Open <code className="text-matrix">http://localhost:3000/dashboard</code></li>
+                  </ol>
+                </div>
+                <p className="text-[10px] text-gray-600 font-mono mt-3">
+                  TARGETING: <code className="text-gray-500">{API}</code>
+                </p>
+              </div>
+            ) : (
+              /* ── Local development ── */
+              <div className="mt-4 max-w-lg mx-auto">
+                <p className="font-mono text-xs text-gray-500">
+                  Start the backend: <code className="text-matrix">uvicorn app.main:app --reload</code>
+                </p>
+                <p className="text-[10px] text-gray-600 font-mono mt-2">
+                  TARGETING: <code className="text-gray-500">{API}</code>
+                </p>
+              </div>
+            )}
           </motion.div>
         ) : (
           <>

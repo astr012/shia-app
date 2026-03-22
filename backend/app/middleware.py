@@ -1,11 +1,12 @@
 # ============================================================
 # SignAI_OS — Middleware
 #
-# Request logging, performance tracking, security headers,
-# and REST API rate limiting for all HTTP requests.
+# Request ID tracking, logging, performance tracking,
+# security headers, and REST API rate limiting.
 # ============================================================
 
 import time
+import uuid
 import logging
 from typing import Callable
 
@@ -29,6 +30,22 @@ _EXEMPT_PATHS = frozenset({
 })
 
 
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """
+    Assigns a unique request ID to every HTTP request.
+    Clients can pass their own via X-Request-ID header.
+    The ID is injected into the response headers for tracing.
+    """
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        request_id = request.headers.get("x-request-id") or str(uuid.uuid4())[:12]
+        request.state.request_id = request_id
+
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
     Per-IP rate limiting for REST API endpoints.
@@ -50,7 +67,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         )
 
         if not _rest_limiter.check(f"rest:{client_ip}"):
-            logger.warning(f"Rate limit exceeded for {client_ip} on {request.url.path}")
+            req_id = getattr(request.state, "request_id", "?")
+            logger.warning(f"[{req_id}] Rate limit exceeded for {client_ip} on {request.url.path}")
             return JSONResponse(
                 status_code=429,
                 content={
@@ -68,7 +86,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """
     Logs every incoming HTTP request with method, path, status code,
-    and response time in milliseconds.
+    response time, and request ID for full traceability.
     """
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
@@ -80,10 +98,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         duration_ms = (time.perf_counter() - start_time) * 1000
+        req_id = getattr(request.state, "request_id", "—")
 
         if not skip_log:
             logger.info(
-                f"{request.method} {request.url.path} → {response.status_code} "
+                f"[{req_id}] {request.method} {request.url.path} → {response.status_code} "
                 f"({duration_ms:.1f}ms)"
             )
 
@@ -107,4 +126,5 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Powered-By"] = "SignAI_OS"
 
         return response
+
 

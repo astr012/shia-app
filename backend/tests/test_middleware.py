@@ -56,3 +56,38 @@ class TestRateLimitMiddleware:
             data = res.json()
             assert data["error"] == "rate_limit_exceeded"
             assert "retry_after_seconds" in data
+
+
+class TestRequestIDMiddleware:
+    """Test X-Request-ID header injection."""
+
+    @pytest.mark.asyncio
+    async def test_auto_generated_id(self, client):
+        """Responses include an auto-generated X-Request-ID."""
+        res = await client.get("/health")
+        assert "x-request-id" in res.headers
+        assert len(res.headers["x-request-id"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_client_provided_id(self, client):
+        """Client-provided X-Request-ID is echoed back."""
+        res = await client.get("/health", headers={"X-Request-ID": "my-trace-123"})
+        assert res.headers["x-request-id"] == "my-trace-123"
+
+
+class TestStructuredErrors:
+    """Test structured JSON error responses."""
+
+    @pytest.mark.asyncio
+    async def test_error_responses_have_request_id_header(self, client):
+        """Even error responses include X-Request-ID header for tracing."""
+        res = await client.get("/nonexistent-route")
+        assert res.status_code == 404
+        # Request ID is in the response header regardless of error
+        assert "x-request-id" in res.headers
+
+    @pytest.mark.asyncio
+    async def test_validation_error_returns_422(self, client):
+        """Invalid request body returns 422."""
+        res = await client.post("/api/translate", json={"text": "", "mode": "INVALID"})
+        assert res.status_code == 422

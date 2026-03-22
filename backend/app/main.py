@@ -23,11 +23,12 @@ from contextlib import asynccontextmanager
 from typing import Optional, List
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.middleware import RequestLoggingMiddleware, SecurityHeadersMiddleware, RateLimitMiddleware
+from app.middleware import RequestLoggingMiddleware, SecurityHeadersMiddleware, RateLimitMiddleware, RequestIDMiddleware
 from app.services.grammar_engine import GrammarEngine
 from app.services.translation_engine import TranslationEngine
 from app.services.connection_manager import ConnectionManager
@@ -73,6 +74,7 @@ app = FastAPI(
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
@@ -80,6 +82,41 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Global Exception Handler ─────────────────────────────────
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Catch any unhandled exception and return a structured JSON error."""
+    import traceback
+    req_id = getattr(request.state, "request_id", "unknown")
+    logger.error(f"[{req_id}] Unhandled exception on {request.method} {request.url.path}: {exc}")
+    logger.debug(traceback.format_exc())
+    analytics.record_error("http")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "internal_server_error",
+            "message": "An unexpected error occurred.",
+            "request_id": req_id,
+        },
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    """Structured JSON responses for HTTP exceptions (400, 404, 422, etc.)."""
+    req_id = getattr(request.state, "request_id", "unknown")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail if isinstance(exc.detail, str) else "http_error",
+            "message": str(exc.detail),
+            "status_code": exc.status_code,
+            "request_id": req_id,
+        },
+    )
 
 
 # ── Services ─────────────────────────────────────────────────

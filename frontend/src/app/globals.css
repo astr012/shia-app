@@ -1,0 +1,165 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=VT323&display=swap');
+@import "tailwindcss";
+
+/* ============================================================
+   SignAI_OS — Design System
+   ============================================================ */
+
+/* ── Custom Theme Tokens ────────────────────────────────── */
+@theme inline {
+  --color-background: #050505;
+  --color-foreground: #e0e0e0;
+  --color-matrix: #00FF41;
+  --color-matrix-dim: rgba(0, 255, 65, 0.3);
+  --color-deep-black: #0a0a0a;
+  --color-panel: #111111;
+  --color-danger: #ff3b3b;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: 'Space Mono', monospace;
+  --font-pixel: 'VT323', monospace;
+}
+
+/* ── Root Variables ──────────────────────────────────────── */
+:root {
+  --background: #050505;
+  --foreground: #e0e0e0;
+  --matrix-green: #00FF41;
+}
+
+/* ── Base Styles ─────────────────────────────────────────── */
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Space Mono', monospace;
+}
+
+::selection {
+  background-color: var(--matrix-green);
+  color: #000000;
+}
+
+/* ── Font Utilities ──────────────────────────────────────── */
+.font-pixel {
+  font-family: 'VT323', monospace;
+}
+
+.font-mono {
+  font-family: 'Space Mono', monospace;
+}
+
+/* ── Pixel Grid Background ───────────────────────────────── */
+.bg-pixel-grid {
+  background-size: 40px 40px;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+}
+
+/* ── Crosshatch Pattern (Active Camera) ──────────────────── */
+.bg-crosshatch {
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPgo8cmVjdCB3aWR0aD0iOCIgaGVpZ2h0PSI4IiBmaWxsPSIjMGEwYTBhIj48L3JlY3Q+CjxwYXRoIGQ9Ik0wIDBMOCA4Wk04IDBMMCA4WiIgc3Ryb2tlPSIjMTEyMjExIiBzdHJva2Utd2lkdGg9IjEiPjwvcGF0aD4KPC9zdmc+");
+}
+
+/* ── Pixel Shadows (Neo-Brutalist) ───────────────────────── */
+.pixel-shadow {
+  box-shadow: 6px 6px 0px 0px rgba(0, 255, 65, 0.8);
+  transition: all 0.1s ease;
+}
+
+.pixel-shadow:active {
+  box-shadow: 2px 2px 0px 0px rgba(0, 255, 65, 0.8);
+  transform: translate(4px, 4px);
+}
+
+.pixel-shadow-white {
+  box-shadow: 6px 6px 0px 0px rgba(255, 255, 255, 0.9);
+  transition: all 0.1s ease;
+}
+
+/* ── Scanline Overlay ────────────────────────────────────── */
+.scanlines {
+  position: relative;
+  overflow: hidden;
+}
+
+.scanlines::before {
+  content: "";
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  background:
+    linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%),
+    linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+  z-index: 10;
+  background-size: 100% 4px, 6px 100%;
+  pointer-events: none;
+}
+
+/* ── Custom Scrollbar ────────────────────────────────────── */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: #050505;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #333;
+  border: 1px solid #1a1a1a;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: var(--matrix-green);
+}
+
+/* ── Animations ──────────────────────────────────────────── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-blink {
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes glitch {
+  0%   { transform: translate(0); }
+  20%  { transform: translate(-2px, 2px); }
+  40%  { transform: translate(-2px, -2px); }
+  60%  { transform: translate(2px, 2px); }
+  80%  { transform: translate(2px, -2px); }
+  100% { transform: translate(0); }
+}
+
+.hover-glitch:hover {
+  animation: glitch 0.3s linear infinite;
+}
+
+/* ── Boot Sequence Animation ─────────────────────────────── */
+@keyframes bootFlicker {
+  0%   { opacity: 0; }
+  10%  { opacity: 1; }
+  12%  { opacity: 0.3; }
+  15%  { opacity: 1; }
+  30%  { opacity: 0.8; }
+  32%  { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+.boot-flicker {
+  animation: bootFlicker 1.5s ease-out forwards;
+}
+
+/* ── Glow Effect ─────────────────────────────────────────── */
+.glow-matrix {
+  text-shadow: 0 0 10px rgba(0, 255, 65, 0.5), 0 0 20px rgba(0, 255, 65, 0.3);
+}
+
+/* ── Border Color Utilities ──────────────────────────────── */
+.border-matrix {
+  border-color: #00FF41;
+}

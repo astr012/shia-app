@@ -11,6 +11,10 @@ pydantic>=2.5.0,<3.0.0
 # AI / NLP (optional — falls back gracefully if not available)
 openai>=1.12.0,<2.0.0
 
+# Environment
+python-dotenv>=1.0.0,<2.0.0
+python-multipart>=0.0.6,<1.0.0
+
 # Premium TTS (optional)
 # elevenlabs>=1.0.0
 
@@ -18,7 +22,3 @@ openai>=1.12.0,<2.0.0
 # sqlalchemy>=2.0.0
 # asyncpg>=0.29.0
 # supabase>=2.0.0
-
-# Utilities
-python-dotenv>=1.0.0,<2.0.0
-python-multipart>=0.0.6,<1.0.0

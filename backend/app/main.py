@@ -2,213 +2,359 @@
 # SignAI_OS — FastAPI Backend
 # Main Application Entry Point
 #
-# Pipeline: WebSocket ← → Grammar AI ← → Translation Engine
+# Pipeline: WebSocket ←→ Grammar AI ←→ Translation Engine
+#
+# Services:
+#   - GrammarEngine:      Sign → Speech (LLM + rule-based)
+#   - TranslationEngine:  Speech → Sign (LLM + vocabulary)
+#   - SessionManager:     Per-connection tracking
+#   - AnalyticsService:   System-wide metrics
+#   - ConnectionManager:  WebSocket lifecycle
 # ============================================================
 
-import os
+import time
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
+from typing import Optional, List
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
 
+from app.config import settings
+from app.middleware import RequestLoggingMiddleware, SecurityHeadersMiddleware
 from app.services.grammar_engine import GrammarEngine
 from app.services.translation_engine import TranslationEngine
 from app.services.connection_manager import ConnectionManager
+from app.services.session_manager import SessionManager
+from app.services.analytics import AnalyticsService
 
 # ── Logging ──────────────────────────────────────────────────
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("signai")
 
+
 # ── Lifespan ─────────────────────────────────────────────────
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle."""
-    logger.info("🟢 SignAI_OS Backend starting...")
-    logger.info(f"   Grammar Engine: {'OpenAI' if os.getenv('OPENAI_API_KEY') else 'Rule-based (fallback)'}")
-    logger.info(f"   Environment: {os.getenv('ENV', 'development')}")
+    logger.info("━" * 60)
+    logger.info(f"🟢 {settings.APP_NAME} v{settings.APP_VERSION} starting")
+    logger.info(f"   Environment : {settings.ENV}")
+    logger.info(f"   Grammar AI  : {'OpenAI (' + settings.OPENAI_MODEL + ')' if settings.OPENAI_API_KEY else 'Rule-based (fallback)'}")
+    logger.info(f"   Frontend URL: {settings.FRONTEND_URL}")
+    logger.info("━" * 60)
     yield
-    logger.info("🔴 SignAI_OS Backend shutting down...")
+    logger.info(f"🔴 {settings.APP_NAME} shutting down | Uptime: {analytics.uptime_formatted}")
+    logger.info("━" * 60)
+
 
 # ── App ──────────────────────────────────────────────────────
+
 app = FastAPI(
-    title="SignAI_OS API",
-    description="AI-powered sign language communication backend",
-    version="2.0.4-beta",
+    title=f"{settings.APP_NAME} API",
+    description="AI-powered sign language ↔ speech communication backend",
+    version=settings.APP_VERSION,
     lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
-# ── CORS ─────────────────────────────────────────────────────
+
+# ── Middleware ───────────────────────────────────────────────
+
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        os.getenv("FRONTEND_URL", "http://localhost:3000"),
-    ],
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
 # ── Services ─────────────────────────────────────────────────
+
 manager = ConnectionManager()
+session_mgr = SessionManager()
 grammar_engine = GrammarEngine()
 translation_engine = TranslationEngine()
+analytics = AnalyticsService()
 
-# ── REST Endpoints ───────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════
+# REST ENDPOINTS
+# ══════════════════════════════════════════════════════════════
+
+
+# ── Health ───────────────────────────────────────────────────
 
 class HealthResponse(BaseModel):
     status: str
     version: str
     timestamp: str
+    uptime: str
     services: dict
+    config: dict
 
-@app.get("/health", response_model=HealthResponse)
+@app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check():
-    """System health check endpoint."""
+    """System health check — returns server status, uptime, and service states."""
     return HealthResponse(
         status="online",
-        version="2.0.4-beta",
-        timestamp=datetime.utcnow().isoformat(),
+        version=settings.APP_VERSION,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        uptime=analytics.uptime_formatted,
         services={
             "grammar_engine": grammar_engine.get_status(),
             "translation_engine": translation_engine.get_status(),
             "active_connections": manager.active_count(),
+            "active_sessions": session_mgr.active_count,
         },
+        config=settings.summary(),
     )
 
+
+# ── Translate ────────────────────────────────────────────────
+
 class TranslateRequest(BaseModel):
-    text: str
-    mode: str  # 'SIGN_TO_SPEECH' or 'SPEECH_TO_SIGN'
-    language: Optional[str] = "en"
+    text: str = Field(..., min_length=1, max_length=500, description="Text to translate")
+    mode: str = Field(..., pattern="^(SIGN_TO_SPEECH|SPEECH_TO_SIGN)$", description="Translation direction")
+    language: Optional[str] = Field("en", description="Target language code")
 
 class TranslateResponse(BaseModel):
     translated_text: str
     original_text: str
     mode: str
     confidence: float
+    processing_time_ms: float
 
-@app.post("/api/translate", response_model=TranslateResponse)
+@app.post("/api/translate", response_model=TranslateResponse, tags=["Translation"])
 async def translate_text(request: TranslateRequest):
-    """REST endpoint for one-off translations (non-realtime)."""
+    """One-off text translation (non-realtime). For real-time, use the WebSocket endpoint."""
+    start = time.perf_counter()
+
     try:
         if request.mode == "SIGN_TO_SPEECH":
-            # Process gesture labels into natural speech
             corrected = await grammar_engine.process(request.text)
+            duration_ms = (time.perf_counter() - start) * 1000
+            analytics.record_latency("grammar", duration_ms)
+            analytics._total_translations += 1
+
             return TranslateResponse(
                 translated_text=corrected,
                 original_text=request.text,
                 mode=request.mode,
                 confidence=0.92,
+                processing_time_ms=round(duration_ms, 1),
             )
         else:
-            # Process speech into sign sequence
             sign_sequence = await translation_engine.speech_to_sign(request.text)
+            duration_ms = (time.perf_counter() - start) * 1000
+            analytics.record_latency("translation", duration_ms)
+            analytics._total_sign_conversions += 1
+
             return TranslateResponse(
                 translated_text=" → ".join(sign_sequence),
                 original_text=request.text,
                 mode=request.mode,
                 confidence=0.89,
+                processing_time_ms=round(duration_ms, 1),
             )
     except Exception as e:
         logger.error(f"Translation error: {e}")
+        analytics._total_errors += 1
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── WebSocket Endpoint (Real-time Pipeline) ──────────────────
+# ── Analytics ────────────────────────────────────────────────
+
+@app.get("/api/analytics", tags=["Analytics"])
+async def get_analytics():
+    """Retrieve system-wide analytics: translations, latency, sessions, uptime."""
+    return {
+        **analytics.get_summary(),
+        "sessions": session_mgr.get_summary(),
+    }
+
+
+# ── Vocabulary ───────────────────────────────────────────────
+
+@app.get("/api/vocabulary", tags=["Translation"])
+async def get_vocabulary():
+    """
+    Returns the complete sign language vocabulary (English word → sign gesture mapping).
+    Useful for the frontend to display available gestures and build UI components.
+    """
+    from app.services.translation_engine import SIGN_VOCABULARY, SKIP_WORDS
+
+    return {
+        "vocabulary": SIGN_VOCABULARY,
+        "skip_words": list(SKIP_WORDS),
+        "total_signs": len(set(SIGN_VOCABULARY.values())),
+        "total_words": len(SIGN_VOCABULARY),
+    }
+
+
+# ── Grammar Rules ────────────────────────────────────────────
+
+@app.get("/api/grammar-rules", tags=["Translation"])
+async def get_grammar_rules():
+    """
+    Returns the rule-based grammar mappings used by the offline fallback engine.
+    """
+    from app.services.grammar_engine import GRAMMAR_RULES
+
+    return {
+        "rules": GRAMMAR_RULES,
+        "total_rules": len(GRAMMAR_RULES),
+        "engine_status": grammar_engine.get_status(),
+    }
+
+
+# ── Sessions ─────────────────────────────────────────────────
+
+@app.get("/api/sessions", tags=["System"])
+async def get_sessions():
+    """List all active WebSocket sessions with their stats."""
+    return session_mgr.get_summary()
+
+
+# ══════════════════════════════════════════════════════════════
+# WEBSOCKET ENDPOINT (Real-time Pipeline)
+# ══════════════════════════════════════════════════════════════
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
     Main real-time pipeline endpoint.
-    
+
     Incoming message types:
       - gesture_sequence: Array of detected gestures → grammar AI → speech text
       - speech_input: Spoken text → sign language sequence
       - manual_text: Manual text input → process based on mode
-    
+      - set_mode: Switch translation mode for this session
+      - ping: Keepalive ping
+
     Outgoing message types:
       - translation_result: Final translated text
       - sign_animation: Sign language animation sequence
       - grammar_processed: Grammar correction details
+      - session_info: Session ID and metadata
+      - pong: Keepalive response
       - error: Error details
     """
     await manager.connect(websocket)
-    logger.info(f"Client connected. Active: {manager.active_count()}")
+    session = session_mgr.create_session(websocket)
+    analytics.register_session(session.session_id)
+
+    logger.info(f"Client connected [session={session.session_id}] | Active: {manager.active_count()}")
+
+    # Send session info to the client
+    await send_ws(websocket, "session_info", {
+        "session_id": session.session_id,
+        "mode": session.mode,
+        "server_version": settings.APP_VERSION,
+    })
 
     try:
         while True:
             raw = await websocket.receive_text()
-            
+
             try:
                 message = json.loads(raw)
                 msg_type = message.get("type")
                 payload = message.get("payload", {})
-                
-                logger.info(f"[WS] Received: {msg_type}")
+
+                logger.info(f"[WS:{session.session_id}] ← {msg_type}")
 
                 if msg_type == "gesture_sequence":
-                    await handle_gesture_sequence(websocket, payload)
+                    session_mgr.record_gesture(websocket)
+                    analytics.record_request(session.session_id, "gesture_sequence")
+                    await handle_gesture_sequence(websocket, payload, session.session_id)
 
                 elif msg_type == "speech_input":
-                    await handle_speech_input(websocket, payload)
+                    session_mgr.record_speech(websocket)
+                    analytics.record_request(session.session_id, "speech_input")
+                    await handle_speech_input(websocket, payload, session.session_id)
 
                 elif msg_type == "manual_text":
-                    await handle_manual_text(websocket, payload)
+                    session_mgr.record_manual(websocket)
+                    analytics.record_request(session.session_id, "manual_text")
+                    await handle_manual_text(websocket, payload, session.session_id)
+
+                elif msg_type == "set_mode":
+                    new_mode = payload.get("mode", "SIGN_TO_SPEECH")
+                    session_mgr.set_mode(websocket, new_mode)
+                    await send_ws(websocket, "mode_changed", {"mode": new_mode})
+                    logger.info(f"[WS:{session.session_id}] Mode → {new_mode}")
 
                 elif msg_type == "ping":
-                    await send_ws(websocket, "pong", {"timestamp": datetime.utcnow().isoformat()})
+                    await send_ws(websocket, "pong", {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "session_id": session.session_id,
+                    })
 
                 else:
                     await send_ws(websocket, "error", {"message": f"Unknown type: {msg_type}"})
 
             except json.JSONDecodeError:
                 await send_ws(websocket, "error", {"message": "Invalid JSON"})
+                session_mgr.record_error(websocket)
+                analytics.record_error(session.session_id)
 
     except WebSocketDisconnect:
+        session_mgr.remove_session(websocket)
+        analytics.unregister_session(session.session_id)
         manager.disconnect(websocket)
-        logger.info(f"Client disconnected. Active: {manager.active_count()}")
+        logger.info(f"Client disconnected [session={session.session_id}] | Active: {manager.active_count()}")
 
 
-# ── Pipeline Handlers ────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# PIPELINE HANDLERS
+# ══════════════════════════════════════════════════════════════
 
-async def handle_gesture_sequence(ws: WebSocket, payload: dict):
+async def handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str):
     """
     SIGN → SPEECH Pipeline:
-    Gesture labels → Grammar Engine (LLM) → Natural text → Send back for TTS
+    Gesture labels → Grammar Engine (LLM) → Natural text → Send for TTS
     """
     gestures = payload.get("gestures", [])
     if not gestures:
         await send_ws(ws, "error", {"message": "No gestures provided"})
         return
 
+    start = time.perf_counter()
+
     # Step 1: Join raw gestures
     raw_text = " ".join(g.replace("_", " ").lower() for g in gestures)
-    logger.info(f"[Pipeline] Raw gesture text: {raw_text}")
+    logger.info(f"[Pipeline:{session_id}] Raw gesture text: {raw_text}")
 
     # Step 2: Grammar correction / natural language restructuring
     corrected_text = await grammar_engine.process(raw_text)
-    logger.info(f"[Pipeline] Corrected text: {corrected_text}")
+    duration_ms = (time.perf_counter() - start) * 1000
+    analytics.record_latency("grammar", duration_ms)
+    logger.info(f"[Pipeline:{session_id}] Corrected text: {corrected_text} ({duration_ms:.1f}ms)")
 
     # Send grammar processing result
     await send_ws(ws, "grammar_processed", {
         "original": raw_text,
         "corrected": corrected_text,
+        "latency_ms": round(duration_ms, 1),
     })
 
     # Step 3: Send final translation
     await send_ws(ws, "translation_result", {
         "translated_text": corrected_text,
         "source_gesture": " → ".join(gestures),
+        "processing_time_ms": round(duration_ms, 1),
     })
 
 
-async def handle_speech_input(ws: WebSocket, payload: dict):
+async def handle_speech_input(ws: WebSocket, payload: dict, session_id: str):
     """
     SPEECH → SIGN Pipeline:
     Spoken text → Translation Engine → Sign language sequence
@@ -218,43 +364,57 @@ async def handle_speech_input(ws: WebSocket, payload: dict):
         await send_ws(ws, "error", {"message": "No text provided"})
         return
 
-    logger.info(f"[Pipeline] Speech input: {text}")
+    start = time.perf_counter()
+    logger.info(f"[Pipeline:{session_id}] Speech input: {text}")
 
     # Convert speech to sign sequence
     sign_sequence = await translation_engine.speech_to_sign(text)
-    logger.info(f"[Pipeline] Sign sequence: {sign_sequence}")
+    duration_ms = (time.perf_counter() - start) * 1000
+    analytics.record_latency("translation", duration_ms)
+    logger.info(f"[Pipeline:{session_id}] Sign sequence: {sign_sequence} ({duration_ms:.1f}ms)")
 
     await send_ws(ws, "sign_animation", {
         "sign_sequence": sign_sequence,
         "source_text": text,
+        "processing_time_ms": round(duration_ms, 1),
     })
 
 
-async def handle_manual_text(ws: WebSocket, payload: dict):
+async def handle_manual_text(ws: WebSocket, payload: dict, session_id: str):
     """Handle manual text input — route based on mode."""
     text = payload.get("text", "")
     mode = payload.get("mode", "SIGN_TO_SPEECH")
 
+    start = time.perf_counter()
+
     if mode == "SIGN_TO_SPEECH":
         corrected = await grammar_engine.process(text)
+        duration_ms = (time.perf_counter() - start) * 1000
+        analytics.record_latency("grammar", duration_ms)
         await send_ws(ws, "translation_result", {
             "translated_text": corrected,
             "source_gesture": "MANUAL",
+            "processing_time_ms": round(duration_ms, 1),
         })
     else:
         sign_sequence = await translation_engine.speech_to_sign(text)
+        duration_ms = (time.perf_counter() - start) * 1000
+        analytics.record_latency("translation", duration_ms)
         await send_ws(ws, "sign_animation", {
             "sign_sequence": sign_sequence,
             "source_text": text,
+            "processing_time_ms": round(duration_ms, 1),
         })
 
 
-# ── Helpers ──────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════════════════════
 
 async def send_ws(ws: WebSocket, msg_type: str, payload: dict):
     """Send a structured WebSocket message."""
     await ws.send_json({
         "type": msg_type,
         "payload": payload,
-        "timestamp": datetime.utcnow().timestamp(),
+        "timestamp": datetime.now(timezone.utc).timestamp(),
     })

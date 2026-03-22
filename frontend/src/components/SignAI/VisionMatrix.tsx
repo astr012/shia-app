@@ -1,7 +1,7 @@
 'use client';
 
 // ============================================================
-// SignAI_OS — Vision Matrix Component (Camera / Tracking View)
+// Shia — Vision Matrix Component (Camera / Tracking View)
 // NOW with REAL camera feed + MediaPipe hand tracking overlay
 // ============================================================
 

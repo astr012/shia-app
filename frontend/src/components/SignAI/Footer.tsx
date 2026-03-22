@@ -1,7 +1,7 @@
 'use client';
 
 // ============================================================
-// SignAI_OS — Footer Component
+// Shia — Footer Component
 // ============================================================
 
 import { motion } from 'framer-motion';

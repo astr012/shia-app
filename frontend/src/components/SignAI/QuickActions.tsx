@@ -1,7 +1,7 @@
 'use client';
 
 // ============================================================
-// SignAI_OS — Quick Actions Grid Component
+// Shia — Quick Actions Grid Component
 // ============================================================
 
 import { motion } from 'framer-motion';

@@ -1,7 +1,7 @@
 'use client';
 
 // ============================================================
-// SignAI_OS — App Header Component
+// Shia — App Header Component
 // ============================================================
 
 import { motion } from 'framer-motion';
@@ -29,7 +29,7 @@ export default function Header({ isSystemActive, mode, onToggleMode, onToggleSys
         </motion.div>
         <div>
           <h1 className="font-pixel text-4xl tracking-widest text-white uppercase">
-            SignAI_OS
+            Shia
           </h1>
           <div className="flex items-center gap-2 mt-1">
             <motion.div

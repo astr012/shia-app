@@ -1,5 +1,5 @@
 // ============================================================
-// SignAI_OS — Utility Functions
+// Shia — Utility Functions
 // ============================================================
 
 import { LogEntry, LogSource } from './types';

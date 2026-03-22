@@ -1,5 +1,5 @@
 // ============================================================
-// SignAI_OS — Component Barrel Exports
+// Shia — Component Barrel Exports
 // ============================================================
 
 export { default as Header } from './Header';

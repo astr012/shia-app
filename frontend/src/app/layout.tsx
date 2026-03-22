@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'SignAI_OS — AI-Powered Sign Language Communication System',
+  title: 'Shia — AI-Powered Sign Language Communication System',
   description:
     'Real-time sign language to speech and speech to sign language translation powered by edge AI. Designed for universal accessibility.',
   keywords: [
@@ -26,9 +26,9 @@ export const metadata: Metadata = {
     'speech to sign',
     'sign to speech',
   ],
-  authors: [{ name: 'SignAI Team' }],
+  authors: [{ name: 'Shia Team' }],
   openGraph: {
-    title: 'SignAI_OS — AI Communication System',
+    title: 'Shia — AI Communication System',
     description: 'Break communication barriers with real-time AI-powered sign language translation.',
     type: 'website',
   },

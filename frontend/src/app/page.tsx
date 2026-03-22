@@ -1,7 +1,7 @@
 'use client';
 
 // ============================================================
-// SignAI_OS — Main Application Page
+// Shia — Main Application Page
 // Wires the pipeline orchestrator into the UI components
 // ============================================================
 

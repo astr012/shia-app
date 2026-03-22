@@ -1,5 +1,5 @@
 // ============================================================
-// SignAI_OS — Core Type Definitions
+// Shia — Core Type Definitions
 // ============================================================
 
 export type TranslationMode = 'SIGN_TO_SPEECH' | 'SPEECH_TO_SIGN';

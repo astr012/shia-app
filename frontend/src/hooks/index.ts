@@ -1,5 +1,5 @@
 // ============================================================
-// SignAI_OS — Hook Barrel Exports
+// Shia — Hook Barrel Exports
 // ============================================================
 
 export { usePipeline } from './usePipeline';

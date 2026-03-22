@@ -1,7 +1,7 @@
 'use client';
 
 // ============================================================
-// SignAI_OS — Transcript Log Component
+// Shia — Transcript Log Component
 // ============================================================
 
 import { useRef, useEffect, useState, KeyboardEvent } from 'react';
@@ -42,7 +42,7 @@ export default function TranscriptLog({ logs, isActive, onManualInput }: Transcr
     <div className="flex flex-col gap-4">
       <h2 className="font-pixel text-2xl text-white">/// TRANSCRIPT_LOG</h2>
 
-      <div className="flex-1 bg-black border-2 border-white min-h-[400px] flex flex-col relative">
+      <div className="bg-black border-2 border-white h-[500px] flex flex-col relative">
         {/* Scroll Area */}
         <div
           ref={scrollRef}

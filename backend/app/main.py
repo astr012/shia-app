@@ -10,10 +10,13 @@
 #   - SessionManager:     Per-connection tracking
 #   - AnalyticsService:   System-wide metrics
 #   - ConnectionManager:  WebSocket lifecycle
+#   - TranslationCache:   LRU cache for repeated translations
+#   - RateLimiter:        Token bucket per-client throttling
 # ============================================================
 
 import time
 import json
+import asyncio
 import logging
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -30,6 +33,8 @@ from app.services.translation_engine import TranslationEngine
 from app.services.connection_manager import ConnectionManager
 from app.services.session_manager import SessionManager
 from app.services.analytics import AnalyticsService
+from app.services.cache import TranslationCache
+from app.services.rate_limiter import RateLimiter
 
 # ── Logging ──────────────────────────────────────────────────
 logger = logging.getLogger("signai")
@@ -83,6 +88,13 @@ session_mgr = SessionManager()
 grammar_engine = GrammarEngine()
 translation_engine = TranslationEngine()
 analytics = AnalyticsService()
+cache = TranslationCache(max_size=256, ttl_seconds=3600)
+ws_limiter = RateLimiter(
+    rate=settings.WS_MAX_MESSAGES_PER_SECOND,
+    capacity=settings.WS_MAX_MESSAGES_PER_SECOND * 2,
+)
+
+HEARTBEAT_INTERVAL = 30  # seconds
 
 
 # ══════════════════════════════════════════════════════════════
@@ -113,6 +125,7 @@ async def health_check():
             "translation_engine": translation_engine.get_status(),
             "active_connections": manager.active_count(),
             "active_sessions": session_mgr.active_count,
+            "cache": cache.get_stats(),
         },
         config=settings.summary(),
     )
@@ -139,7 +152,14 @@ async def translate_text(request: TranslateRequest):
 
     try:
         if request.mode == "SIGN_TO_SPEECH":
-            corrected = await grammar_engine.process(request.text)
+            # Check cache first
+            cached = cache.get_grammar(request.text)
+            if cached:
+                corrected = cached
+            else:
+                corrected = await grammar_engine.process(request.text)
+                cache.set_grammar(request.text, corrected)
+
             duration_ms = (time.perf_counter() - start) * 1000
             analytics.record_latency("grammar", duration_ms)
             analytics._total_translations += 1
@@ -152,7 +172,14 @@ async def translate_text(request: TranslateRequest):
                 processing_time_ms=round(duration_ms, 1),
             )
         else:
-            sign_sequence = await translation_engine.speech_to_sign(request.text)
+            # Check cache first
+            cached_signs = cache.get_sign(request.text)
+            if cached_signs:
+                sign_sequence = cached_signs
+            else:
+                sign_sequence = await translation_engine.speech_to_sign(request.text)
+                cache.set_sign(request.text, sign_sequence)
+
             duration_ms = (time.perf_counter() - start) * 1000
             analytics.record_latency("translation", duration_ms)
             analytics._total_sign_conversions += 1
@@ -178,6 +205,8 @@ async def get_analytics():
     return {
         **analytics.get_summary(),
         "sessions": session_mgr.get_summary(),
+        "cache": cache.get_stats(),
+        "rate_limiter": ws_limiter.get_stats(),
     }
 
 
@@ -223,6 +252,20 @@ async def get_sessions():
     return session_mgr.get_summary()
 
 
+# ── Cache ────────────────────────────────────────────────────
+
+@app.get("/api/cache", tags=["System"])
+async def get_cache_stats():
+    """Translation cache statistics: entries, hit rate, size."""
+    return cache.get_stats()
+
+@app.delete("/api/cache", tags=["System"])
+async def clear_cache():
+    """Clear the translation cache."""
+    cache.clear()
+    return {"status": "cleared"}
+
+
 # ══════════════════════════════════════════════════════════════
 # WEBSOCKET ENDPOINT (Real-time Pipeline)
 # ══════════════════════════════════════════════════════════════
@@ -260,9 +303,22 @@ async def websocket_endpoint(websocket: WebSocket):
         "server_version": settings.APP_VERSION,
     })
 
+    # Start server-side heartbeat task
+    heartbeat_task = asyncio.create_task(
+        _heartbeat_loop(websocket, session.session_id)
+    )
+
     try:
         while True:
             raw = await websocket.receive_text()
+
+            # Rate limiting check
+            if not ws_limiter.check(session.session_id):
+                await send_ws(websocket, "error", {
+                    "message": "Rate limit exceeded. Slow down.",
+                    "code": "RATE_LIMITED",
+                })
+                continue
 
             try:
                 message = json.loads(raw)
@@ -307,6 +363,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 analytics.record_error(session.session_id)
 
     except WebSocketDisconnect:
+        pass
+    finally:
+        heartbeat_task.cancel()
         session_mgr.remove_session(websocket)
         analytics.unregister_session(session.session_id)
         manager.disconnect(websocket)
@@ -333,17 +392,26 @@ async def handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str)
     raw_text = " ".join(g.replace("_", " ").lower() for g in gestures)
     logger.info(f"[Pipeline:{session_id}] Raw gesture text: {raw_text}")
 
-    # Step 2: Grammar correction / natural language restructuring
-    corrected_text = await grammar_engine.process(raw_text)
-    duration_ms = (time.perf_counter() - start) * 1000
+    # Step 2: Check cache first, then grammar engine
+    cached = cache.get_grammar(raw_text)
+    if cached:
+        corrected_text = cached
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.info(f"[Pipeline:{session_id}] Cache HIT: {corrected_text} ({duration_ms:.1f}ms)")
+    else:
+        corrected_text = await grammar_engine.process(raw_text)
+        cache.set_grammar(raw_text, corrected_text)
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.info(f"[Pipeline:{session_id}] Corrected text: {corrected_text} ({duration_ms:.1f}ms)")
+
     analytics.record_latency("grammar", duration_ms)
-    logger.info(f"[Pipeline:{session_id}] Corrected text: {corrected_text} ({duration_ms:.1f}ms)")
 
     # Send grammar processing result
     await send_ws(ws, "grammar_processed", {
         "original": raw_text,
         "corrected": corrected_text,
         "latency_ms": round(duration_ms, 1),
+        "cached": cached is not None,
     })
 
     # Step 3: Send final translation
@@ -367,11 +435,19 @@ async def handle_speech_input(ws: WebSocket, payload: dict, session_id: str):
     start = time.perf_counter()
     logger.info(f"[Pipeline:{session_id}] Speech input: {text}")
 
-    # Convert speech to sign sequence
-    sign_sequence = await translation_engine.speech_to_sign(text)
-    duration_ms = (time.perf_counter() - start) * 1000
+    # Check cache first, then translation engine
+    cached = cache.get_sign(text)
+    if cached:
+        sign_sequence = cached
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.info(f"[Pipeline:{session_id}] Cache HIT: {sign_sequence} ({duration_ms:.1f}ms)")
+    else:
+        sign_sequence = await translation_engine.speech_to_sign(text)
+        cache.set_sign(text, sign_sequence)
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.info(f"[Pipeline:{session_id}] Sign sequence: {sign_sequence} ({duration_ms:.1f}ms)")
+
     analytics.record_latency("translation", duration_ms)
-    logger.info(f"[Pipeline:{session_id}] Sign sequence: {sign_sequence} ({duration_ms:.1f}ms)")
 
     await send_ws(ws, "sign_animation", {
         "sign_sequence": sign_sequence,
@@ -418,3 +494,20 @@ async def send_ws(ws: WebSocket, msg_type: str, payload: dict):
         "payload": payload,
         "timestamp": datetime.now(timezone.utc).timestamp(),
     })
+
+
+async def _heartbeat_loop(ws: WebSocket, session_id: str):
+    """
+    Server-side heartbeat: sends a ping every HEARTBEAT_INTERVAL seconds.
+    If the client is dead, the send will raise an exception and the
+    WebSocket handler's finally block will clean up.
+    """
+    try:
+        while True:
+            await asyncio.sleep(HEARTBEAT_INTERVAL)
+            await send_ws(ws, "heartbeat", {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "session_id": session_id,
+            })
+    except Exception:
+        pass  # Connection closed — cleanup happens in the main handler

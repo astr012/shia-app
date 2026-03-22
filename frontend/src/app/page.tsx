@@ -1,11 +1,12 @@
 'use client';
 
 // ============================================================
-// Shia — Main Application Page
-// Wires the pipeline orchestrator into the UI components
+// SHIA — Main Application Page
+// Wires the pipeline orchestrator + server health into the UI
 // ============================================================
 
 import { usePipeline } from '@/hooks/usePipeline';
+import { useServerHealth } from '@/hooks/useServerHealth';
 import Header from '@/components/SignAI/Header';
 import VisionMatrix from '@/components/SignAI/VisionMatrix';
 import QuickActions from '@/components/SignAI/QuickActions';
@@ -18,6 +19,7 @@ export default function Home() {
     isActive,
     mode,
     logs,
+    wsStatus,
 
     // Pipeline actions
     startPipeline,
@@ -26,6 +28,13 @@ export default function Home() {
     sendManualInput,
     processGestureResult,
   } = usePipeline();
+
+  // Server health polling (always on for status tiles)
+  const {
+    health,
+    isReachable,
+    latencyMs,
+  } = useServerHealth({ enabled: true });
 
   const handleToggleSystem = () => {
     if (isActive) {
@@ -53,7 +62,16 @@ export default function Home() {
             isActive={isActive}
             onGestureResult={processGestureResult}
           />
-          <QuickActions isActive={isActive} />
+          <QuickActions
+            isActive={isActive}
+            wsStatus={wsStatus}
+            latencyMs={latencyMs}
+            isServerReachable={isReachable}
+            grammarEngine={health?.services.grammar_engine || 'unknown'}
+            translationEngine={health?.services.translation_engine || 'unknown'}
+            activeConnections={health?.services.active_connections || 0}
+            serverUptime={health?.uptime || '—'}
+          />
         </div>
 
         {/* Right Column: Transcript Log */}
@@ -67,7 +85,10 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <Footer />
+      <Footer
+        serverVersion={health?.version}
+        isServerReachable={isReachable}
+      />
     </div>
   );
 }

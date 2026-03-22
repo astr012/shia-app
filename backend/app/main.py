@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.middleware import RequestLoggingMiddleware, SecurityHeadersMiddleware
+from app.middleware import RequestLoggingMiddleware, SecurityHeadersMiddleware, RateLimitMiddleware
 from app.services.grammar_engine import GrammarEngine
 from app.services.translation_engine import TranslationEngine
 from app.services.connection_manager import ConnectionManager
@@ -70,6 +70,7 @@ app = FastAPI(
 
 # ── Middleware ───────────────────────────────────────────────
 
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(

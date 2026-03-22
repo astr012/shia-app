@@ -1,8 +1,8 @@
 # ============================================================
 # SignAI_OS — Middleware
 #
-# Request logging, performance tracking, and security headers
-# for all HTTP requests passing through the FastAPI server.
+# Request logging, performance tracking, security headers,
+# and REST API rate limiting for all HTTP requests.
 # ============================================================
 
 import time
@@ -11,9 +11,58 @@ from typing import Callable
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, JSONResponse
+
+from app.services.rate_limiter import RateLimiter
 
 logger = logging.getLogger("signai.middleware")
+
+
+# ── Rate limiting for REST endpoints ─────────────────────────
+
+# Shared REST rate limiter: 30 req/s per IP, burst of 60
+_rest_limiter = RateLimiter(rate=30, capacity=60)
+
+# Paths exempt from rate limiting
+_EXEMPT_PATHS = frozenset({
+    "/health", "/docs", "/redoc", "/openapi.json", "/favicon.ico",
+})
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """
+    Per-IP rate limiting for REST API endpoints.
+    Returns 429 Too Many Requests when the client exceeds the limit.
+    Exempt paths (health, docs) are never rate-limited.
+    """
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Skip rate limiting for exempt paths and WebSocket upgrades
+        if request.url.path in _EXEMPT_PATHS or request.headers.get("upgrade") == "websocket":
+            return await call_next(request)
+
+        # Identify client by IP (handles proxied requests via X-Forwarded-For)
+        client_ip = (
+            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or request.client.host
+            if request.client
+            else "unknown"
+        )
+
+        if not _rest_limiter.check(f"rest:{client_ip}"):
+            logger.warning(f"Rate limit exceeded for {client_ip} on {request.url.path}")
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "rate_limit_exceeded",
+                    "message": "Too many requests. Please slow down.",
+                    "retry_after_seconds": 1,
+                },
+                headers={"Retry-After": "1"},
+            )
+
+        response = await call_next(request)
+        return response
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -58,3 +107,4 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Powered-By"] = "SignAI_OS"
 
         return response
+

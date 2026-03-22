@@ -1,0 +1,25 @@
+# ============================================================
+# SignAI_OS — Root .gitignore
+# ============================================================
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Agent / AI tool artifacts
+.agent/
+.agents/
+.claude/
+.antigravity/
+
+# Logs
+*.log
+npm-debug.log*

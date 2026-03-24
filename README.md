@@ -2,7 +2,7 @@
 
 > Real-time sign language ↔ speech translation, powered by edge AI and LLMs.
 
-![Status](https://img.shields.io/badge/status-beta-orange) ![Version](https://img.shields.io/badge/version-2.2.0--beta-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.10+-yellow) ![Node](https://img.shields.io/badge/node-18+-green) ![Tests](https://img.shields.io/badge/tests-61%20passing-brightgreen)
+![Status](https://img.shields.io/badge/status-beta-orange) ![Version](https://img.shields.io/badge/version-2.2.0--beta-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.10+-yellow) ![Node](https://img.shields.io/badge/node-18+-green) ![Tests](https://img.shields.io/badge/tests-75%20passing-brightgreen) ![Docker](https://img.shields.io/badge/docker-compose-blue)
 
 ---
 
@@ -166,7 +166,17 @@ npm run dev
 
 Opens at [http://localhost:3000](http://localhost:3000)
 
-### 4. Run Tests
+### 4. Docker (One-Command)
+
+```bash
+# Start both frontend + backend with Docker Compose
+docker compose up --build
+
+# Backend: http://localhost:8000
+# Frontend: http://localhost:3000
+```
+
+### 5. Run Tests
 
 ```bash
 cd backend
@@ -174,7 +184,9 @@ cd backend
 python -m pytest tests/ -v
 ```
 
-### 5. Environment Variables
+> 75 tests covering all services, REST endpoints, WebSocket pipeline, and middleware
+
+### 6. Environment Variables
 
 Copy `backend/.env.example` to `backend/.env` and configure:
 
@@ -207,6 +219,7 @@ ai-powered-communication-system/
 │   │   │   ├── Header.tsx               # System controls + nav
 │   │   │   ├── VisionMatrix.tsx         # Camera/tracking viewport
 │   │   │   ├── TranscriptLog.tsx        # Real-time log display
+│   │   │   ├── SignPlayer.tsx           # 🆕 Sign token animation player
 │   │   │   ├── QuickActions.tsx         # Status tiles
 │   │   │   └── Footer.tsx               # Footer
 │   │   ├── hooks/                        # ⭐ PIPELINE LAYERS
@@ -235,18 +248,21 @@ ai-powered-communication-system/
 │   │       ├── analytics.py             # System metrics & latency tracking
 │   │       ├── cache.py                 # 🆕 LRU translation cache with TTL
 │   │       └── rate_limiter.py          # 🆕 Token bucket rate limiter
-│   ├── tests/                            # 🧪 Test Suite (61 tests)
+│   ├── tests/                            # 🧪 Test Suite (75 tests)
 │   │   ├── test_grammar_engine.py       # Grammar engine tests (10)
 │   │   ├── test_translation_engine.py   # Translation engine tests (10)
 │   │   ├── test_cache.py               # Cache tests (13)
 │   │   ├── test_rate_limiter.py         # Rate limiter tests (7)
 │   │   ├── test_api.py                  # REST API endpoint tests (13)
-│   │   └── test_middleware.py           # Middleware + error handler tests (8)
+│   │   ├── test_middleware.py           # Middleware + error handler tests (8)
+│   │   └── test_websocket.py           # 🆕 WebSocket pipeline tests (14)
+│   ├── Dockerfile                        # 🐳 Backend container
 │   ├── pytest.ini                        # Test configuration
 │   ├── requirements.txt
 │   ├── .env.example
 │   └── .env                              # Local config (gitignored)
 │
+├── docker-compose.yml                     # 🐳 One-command deployment
 └── README.md
 ```
 
@@ -476,7 +492,8 @@ python -m pytest tests/ -v
 | `test_rate_limiter.py` | 7 | Token bucket, per-client isolation, stale cleanup |
 | `test_api.py` | 13 | All REST endpoints (health, translate, vocab, cache, analytics) |
 | `test_middleware.py` | 8 | Rate limiting, request ID tracking, error responses |
-| **Total** | **61** | **All passing ✅** |
+| `test_websocket.py` | 14 | **End-to-end pipeline:** sign→speech, speech→sign, session lifecycle, manual routing, error handling |
+| **Total** | **75** | **All passing ✅** |
 
 ---
 
@@ -528,6 +545,23 @@ npm run dev
 ### Testing Without a Camera
 
 The system runs a **demo simulation** when the backend isn't connected, automatically playing through a sample gesture sequence with grammar processing and TTS output.
+
+---
+
+## 🔒 Security
+
+| Measure | Implementation | Location |
+|---------|---------------|----------|
+| **Rate Limiting** | Token bucket per-IP (REST: 30 req/s) + per-client (WS: 20 msg/s) | `middleware.py`, `rate_limiter.py` |
+| **CORS** | Configurable `ALLOWED_ORIGINS` via env, credentials support | `main.py` (CORSMiddleware) |
+| **Security Headers** | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 1; mode=block`, `Referrer-Policy` | `middleware.py` (SecurityHeadersMiddleware) |
+| **Input Validation** | Pydantic models validate all REST request bodies (mode enum, text non-empty) | `main.py` (TranslateRequest model) |
+| **XSS Prevention** | React auto-escapes all rendered output, no `dangerouslySetInnerHTML` | All frontend components |
+| **CSRF Protection** | API is stateless (no cookies/sessions), CORS restricts origins | `main.py` |
+| **Request Tracing** | Unique `X-Request-ID` on every request for audit trail | `middleware.py` (RequestIDMiddleware) |
+| **Error Handling** | Global exception handler — never leaks stack traces to client | `main.py` (global_exception_handler) |
+| **No SQL** | No database — no SQL injection surface | Architecture choice |
+| **No Passwords** | No user accounts — no password storage needed | Architecture choice |
 
 ---
 

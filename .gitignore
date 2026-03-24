@@ -19,7 +19,42 @@ desktop.ini
 .agents/
 .claude/
 .antigravity/
+.gemini/
 
 # Logs
 *.log
 npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Node
+node_modules/
+.next/
+out/
+
+# Test / coverage
+.pytest_cache/
+htmlcov/
+.coverage
+coverage/
+
+# Build artifacts
+*.tgz
+*.tar.gz

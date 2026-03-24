@@ -5,7 +5,7 @@
 // ============================================================
 
 import { motion } from 'framer-motion';
-import { Terminal, Power, RefreshCw, BarChart3 } from 'lucide-react';
+import { Terminal, Power, RefreshCw, BarChart3, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { TranslationMode } from '@/lib/types';
 
@@ -76,6 +76,16 @@ export default function Header({ isSystemActive, mode, onToggleMode, onToggleSys
           >
             <BarChart3 size={16} />
             DASHBOARD
+          </motion.div>
+        </Link>
+
+        <Link href="/settings">
+          <motion.div
+            className="flex-1 md:flex-none bg-transparent border-2 border-white/30 text-gray-400 px-3 py-2 text-sm font-bold uppercase hover:bg-white/10 hover:text-white transition-colors flex items-center justify-center cursor-pointer"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.97 }}
+          >
+            <Settings size={16} />
           </motion.div>
         </Link>
 

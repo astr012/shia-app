@@ -33,7 +33,7 @@ class Settings:
     DEBUG: bool = ENV == "development"
 
     # ── Version ──────────────────────────────────────────────
-    APP_VERSION: str = "2.1.0-beta"
+    APP_VERSION: str = "2.2.0-beta"
     APP_NAME: str = "SignAI_OS"
 
     # ── CORS ─────────────────────────────────────────────────

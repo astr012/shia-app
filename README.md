@@ -2,7 +2,7 @@
 
 > Real-time sign language ↔ speech translation, powered by edge AI and LLMs.
 
-![Status](https://img.shields.io/badge/status-beta-orange) ![Version](https://img.shields.io/badge/version-2.1.0--beta-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.10+-yellow) ![Node](https://img.shields.io/badge/node-18+-green)
+![Status](https://img.shields.io/badge/status-beta-orange) ![Version](https://img.shields.io/badge/version-2.2.0--beta-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.10+-yellow) ![Node](https://img.shields.io/badge/node-18+-green) ![Tests](https://img.shields.io/badge/tests-61%20passing-brightgreen)
 
 ---
 
@@ -49,38 +49,54 @@ Camera/Mic (Frontend) → MediaPipe (Tracks Gestures) → FastAPI (Grammar AI) �
 ### Backend Service Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    FastAPI Application                       │
-│                                                             │
-│  ┌─────────────┐  ┌──────────────┐  ┌───────────────────┐  │
-│  │  Middleware  │  │  REST Routes │  │     WebSocket     │  │
-│  │  • Logging   │  │  /health     │  │     /ws           │  │
-│  │  • Security  │  │  /api/*      │  │                   │  │
-│  │  • CORS      │  │              │  │                   │  │
-│  └──────┬──────┘  └──────┬───────┘  └────────┬──────────┘  │
-│         │                │                    │              │
-│  ┌──────▼────────────────▼────────────────────▼──────────┐  │
-│  │                   Service Layer                        │  │
-│  │                                                        │  │
-│  │  ┌────────────┐  ┌──────────────┐  ┌───────────────┐  │  │
-│  │  │  Grammar   │  │ Translation  │  │   Session     │  │  │
-│  │  │  Engine    │  │   Engine     │  │   Manager     │  │  │
-│  │  │            │  │              │  │               │  │  │
-│  │  │ • OpenAI   │  │ • OpenAI     │  │ • Track IDs   │  │  │
-│  │  │ • Rules    │  │ • Vocabulary │  │ • Per-session  │  │  │
-│  │  │   fallback │  │   fallback   │  │   metrics     │  │  │
-│  │  └────────────┘  └──────────────┘  └───────────────┘  │  │
-│  │                                                        │  │
-│  │  ┌────────────┐  ┌──────────────┐  ┌───────────────┐  │  │
-│  │  │ Connection │  │  Analytics   │  │    Config     │  │  │
-│  │  │  Manager   │  │   Service    │  │    Module     │  │  │
-│  │  │            │  │              │  │               │  │  │
-│  │  │ • WS pool  │  │ • Latency   │  │ • .env loader │  │  │
-│  │  │ • Broadcast│  │ • Uptime    │  │ • Settings    │  │  │
-│  │  │ • Cleanup  │  │ • Counters  │  │ • Validation  │  │  │
-│  │  └────────────┘  └──────────────┘  └───────────────┘  │  │
-│  └────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                      FastAPI Application                         │
+│                                                                  │
+│  ┌──────────────────┐  ┌──────────────┐  ┌───────────────────┐  │
+│  │    Middleware     │  │  REST Routes │  │     WebSocket     │  │
+│  │  • Request ID    │  │  /health     │  │     /ws           │  │
+│  │  • Rate Limit    │  │  /api/*      │  │  • Heartbeat      │  │
+│  │  • Logging       │  │  /dashboard  │  │  • Rate limited   │  │
+│  │  • Security      │  │              │  │                   │  │
+│  │  • CORS          │  │              │  │                   │  │
+│  └──────┬───────────┘  └──────┬───────┘  └────────┬──────────┘  │
+│         │                     │                    │              │
+│  ┌──────▼─────────────────────▼────────────────────▼──────────┐  │
+│  │                     Service Layer                           │  │
+│  │                                                             │  │
+│  │  ┌────────────┐  ┌──────────────┐  ┌───────────────┐      │  │
+│  │  │  Grammar   │  │ Translation  │  │   Session     │      │  │
+│  │  │  Engine    │  │   Engine     │  │   Manager     │      │  │
+│  │  │ • OpenAI   │  │ • OpenAI     │  │ • Track IDs   │      │  │
+│  │  │ • Rules    │  │ • Vocabulary │  │ • Per-session  │      │  │
+│  │  │   fallback │  │   fallback   │  │   metrics     │      │  │
+│  │  └────────────┘  └──────────────┘  └───────────────┘      │  │
+│  │                                                             │  │
+│  │  ┌────────────┐  ┌──────────────┐  ┌───────────────┐      │  │
+│  │  │ Translation│  │    Rate      │  │  Analytics    │      │  │
+│  │  │   Cache    │  │   Limiter    │  │   Service     │      │  │
+│  │  │ • LRU      │  │ • Token     │  │ • Latency     │      │  │
+│  │  │ • TTL      │  │   Bucket    │  │ • Uptime      │      │  │
+│  │  │ • Hit/miss │  │ • Per-IP    │  │ • Counters    │      │  │
+│  │  └────────────┘  └──────────────┘  └───────────────┘      │  │
+│  │                                                             │  │
+│  │  ┌────────────┐  ┌──────────────┐                          │  │
+│  │  │ Connection │  │    Config    │                          │  │
+│  │  │  Manager   │  │   Module    │                          │  │
+│  │  │ • WS pool  │  │ • .env      │                          │  │
+│  │  │ • Broadcast│  │ • Settings  │                          │  │
+│  │  │ • Cleanup  │  │ • Logging   │                          │  │
+│  │  └────────────┘  └──────────────┘                          │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                                                                    │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │              Exception Handling & Observability              │  │
+│  │  • Global exception handler (structured JSON errors)        │  │
+│  │  • HTTP exception handler (400, 404, 422 → JSON)            │  │
+│  │  • X-Request-ID tracking on every request                   │  │
+│  │  • X-Response-Time header                                   │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -93,14 +109,19 @@ Camera/Mic (Frontend) → MediaPipe (Tracks Gestures) → FastAPI (Grammar AI) �
 - **Vision AI:** MediaPipe Hands (in-browser, zero-latency)
 - **Audio:** Web Speech API (STT + TTS)
 - **Transport:** WebSocket (real-time bidirectional)
+- **Pages:** Main app (`/`) + System Dashboard (`/dashboard`)
 
 ### Backend (FastAPI)
 - **Framework:** Python FastAPI with async/await
-- **Real-time:** Native WebSocket with session tracking
+- **Real-time:** Native WebSocket with session tracking + heartbeats
 - **Grammar AI:** OpenAI GPT-4o (with rule-based offline fallback)
 - **Translation:** Vocabulary-based + LLM-enhanced sign sequence generation
-- **Middleware:** Request logging, security headers, CORS
+- **Caching:** LRU translation cache with TTL expiry (avoids repeated LLM calls)
+- **Rate Limiting:** Token bucket per-IP (REST) + per-client (WebSocket)
+- **Middleware:** Request ID tracking, rate limiting, logging, security headers, CORS
+- **Error Handling:** Global exception handler with structured JSON responses
 - **Analytics:** In-memory metrics (latency, sessions, throughput)
+- **Testing:** 61 tests (pytest + pytest-asyncio + httpx)
 - **Config:** Centralized settings with `.env` support
 
 ---
@@ -115,8 +136,8 @@ Camera/Mic (Frontend) → MediaPipe (Tracks Gestures) → FastAPI (Grammar AI) �
 ### 1. Clone & Setup
 
 ```bash
-git clone https://github.com/your-username/ai-powered-communication-system.git
-cd ai-powered-communication-system
+git clone https://github.com/astr012/shia-app.git
+cd shia-app
 ```
 
 ### 2. Backend
@@ -145,7 +166,15 @@ npm run dev
 
 Opens at [http://localhost:3000](http://localhost:3000)
 
-### 4. Environment Variables
+### 4. Run Tests
+
+```bash
+cd backend
+.\venv\Scripts\activate
+python -m pytest tests/ -v
+```
+
+### 5. Environment Variables
 
 Copy `backend/.env.example` to `backend/.env` and configure:
 
@@ -159,7 +188,6 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 | `OPENAI_MODEL` | No | `gpt-4o-mini` | OpenAI model to use |
 | `FRONTEND_URL` | No | `http://localhost:3000` | Frontend URL for CORS |
 | `WS_RATE_LIMIT` | No | `20` | Max WebSocket messages per second |
-| `REST_RATE_LIMIT` | No | `60` | Max REST requests per minute |
 
 ---
 
@@ -172,9 +200,11 @@ ai-powered-communication-system/
 │   │   ├── app/
 │   │   │   ├── layout.tsx                # Root layout + SEO
 │   │   │   ├── page.tsx                  # Main page (pipeline ↔ UI)
+│   │   │   ├── dashboard/
+│   │   │   │   └── page.tsx             # 📊 System Dashboard
 │   │   │   └── globals.css              # Design system
 │   │   ├── components/SignAI/
-│   │   │   ├── Header.tsx               # System controls
+│   │   │   ├── Header.tsx               # System controls + nav
 │   │   │   ├── VisionMatrix.tsx         # Camera/tracking viewport
 │   │   │   ├── TranscriptLog.tsx        # Real-time log display
 │   │   │   ├── QuickActions.tsx         # Status tiles
@@ -183,6 +213,7 @@ ai-powered-communication-system/
 │   │   │   ├── usePipeline.ts           # Orchestrator (wires everything)
 │   │   │   ├── useWebSocket.ts          # Layer 1: Transport
 │   │   │   ├── useMediaPipe.ts          # Layer 2: Vision AI
+│   │   │   ├── useServerHealth.ts       # Layer 4: Health polling
 │   │   │   └── useSpeech.ts             # Layer 3: TTS + STT
 │   │   ├── lib/
 │   │   │   ├── types.ts                 # Core type definitions
@@ -195,13 +226,23 @@ ai-powered-communication-system/
 │   ├── app/
 │   │   ├── main.py                       # Server entry + WebSocket + REST routes
 │   │   ├── config.py                     # Centralized settings (.env loader)
-│   │   ├── middleware.py                 # Request logging + security headers
+│   │   ├── middleware.py                 # Request ID, rate limit, logging, security
 │   │   └── services/
 │   │       ├── grammar_engine.py         # Sign → Natural language (LLM + rules)
 │   │       ├── translation_engine.py     # Speech → Sign sequences (LLM + vocab)
 │   │       ├── connection_manager.py     # WebSocket client pool management
 │   │       ├── session_manager.py        # Per-connection session tracking
-│   │       └── analytics.py             # System metrics & latency tracking
+│   │       ├── analytics.py             # System metrics & latency tracking
+│   │       ├── cache.py                 # 🆕 LRU translation cache with TTL
+│   │       └── rate_limiter.py          # 🆕 Token bucket rate limiter
+│   ├── tests/                            # 🧪 Test Suite (61 tests)
+│   │   ├── test_grammar_engine.py       # Grammar engine tests (10)
+│   │   ├── test_translation_engine.py   # Translation engine tests (10)
+│   │   ├── test_cache.py               # Cache tests (13)
+│   │   ├── test_rate_limiter.py         # Rate limiter tests (7)
+│   │   ├── test_api.py                  # REST API endpoint tests (13)
+│   │   └── test_middleware.py           # Middleware + error handler tests (8)
+│   ├── pytest.ini                        # Test configuration
 │   ├── requirements.txt
 │   ├── .env.example
 │   └── .env                              # Local config (gitignored)
@@ -219,39 +260,49 @@ ai-powered-communication-system/
 |--------|------|------|-------------|
 | `GET` | `/health` | System | Server health, uptime, service states, config summary |
 | `POST` | `/api/translate` | Translation | One-off text translation (sign↔speech) |
-| `GET` | `/api/analytics` | Analytics | System metrics: latency, sessions, throughput |
+| `GET` | `/api/analytics` | Analytics | System metrics: latency, sessions, throughput, cache, rate limiter |
 | `GET` | `/api/vocabulary` | Translation | Complete sign language vocabulary (word → gesture) |
 | `GET` | `/api/grammar-rules` | Translation | Rule-based grammar mappings (offline fallback) |
 | `GET` | `/api/sessions` | System | Active WebSocket sessions with per-session stats |
+| `GET` | `/api/cache` | System | Cache statistics (entries, hit rate, TTL) |
+| `DELETE` | `/api/cache` | System | Clear translation cache |
 
 > 📝 **Interactive docs** available at [http://localhost:8000/docs](http://localhost:8000/docs) (Swagger) and [http://localhost:8000/redoc](http://localhost:8000/redoc) (ReDoc)
+
+### Response Headers
+
+Every response includes:
+- `X-Request-ID` — Unique request identifier (for tracing)
+- `X-Response-Time` — Server processing time
+- `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection` — Security headers
 
 ### REST Examples
 
 **Health Check:**
 ```bash
-GET /health
+curl http://localhost:8000/health
 
 # Response:
 {
   "status": "online",
-  "version": "2.1.0-beta",
+  "version": "2.2.0-beta",
   "uptime": "2h 15m 30s",
   "services": {
     "grammar_engine": "rule-based",
     "translation_engine": "vocabulary-based",
     "active_connections": 1,
     "active_sessions": 1
-  }
+  },
+  "cache": { "entries": 5, "hit_rate_pct": 75.0 },
+  "rate_limiter": { "active_clients": 2, "total_denied": 0 }
 }
 ```
 
 **Translate (Sign → Speech):**
 ```bash
-POST /api/translate
-Content-Type: application/json
-
-{"text": "hello how you", "mode": "SIGN_TO_SPEECH"}
+curl -X POST http://localhost:8000/api/translate \
+  -H "Content-Type: application/json" \
+  -d '{"text": "hello how you", "mode": "SIGN_TO_SPEECH"}'
 
 # Response:
 {
@@ -265,10 +316,9 @@ Content-Type: application/json
 
 **Translate (Speech → Sign):**
 ```bash
-POST /api/translate
-Content-Type: application/json
-
-{"text": "How are you today?", "mode": "SPEECH_TO_SIGN"}
+curl -X POST http://localhost:8000/api/translate \
+  -H "Content-Type: application/json" \
+  -d '{"text": "How are you today?", "mode": "SPEECH_TO_SIGN"}'
 
 # Response:
 {
@@ -285,8 +335,10 @@ Content-Type: application/json
 **Connection Flow:**
 1. Client connects to `ws://localhost:8000/ws`
 2. Server sends `session_info` with assigned session ID
-3. Client sends messages, server responds in real-time
-4. On disconnect, session stats are logged
+3. Server starts heartbeat pings every 30 seconds
+4. Client sends messages, server responds in real-time
+5. Rate limiting: max 20 messages/second per client
+6. On disconnect, session stats are logged
 
 **Client → Server:**
 ```json
@@ -299,12 +351,14 @@ Content-Type: application/json
 
 **Server → Client:**
 ```json
-{ "type": "session_info", "payload": { "session_id": "a1b2c3d4", "mode": "SIGN_TO_SPEECH", "server_version": "2.1.0-beta" } }
-{ "type": "translation_result", "payload": { "translated_text": "Hello! How are you?", "processing_time_ms": 1.5 } }
+{ "type": "session_info", "payload": { "session_id": "a1b2c3d4", "mode": "SIGN_TO_SPEECH", "server_version": "2.2.0-beta" } }
+{ "type": "translation_result", "payload": { "translated_text": "Hello! How are you?", "processing_time_ms": 1.5, "cached": false } }
 { "type": "sign_animation", "payload": { "sign_sequence": ["WAVE_HELLO", "HOW", "BE", "POINT_FORWARD"], "processing_time_ms": 0.8 } }
 { "type": "grammar_processed", "payload": { "original": "hello how you", "corrected": "Hello! How are you?", "latency_ms": 1.2 } }
 { "type": "mode_changed", "payload": { "mode": "SPEECH_TO_SIGN" } }
+{ "type": "heartbeat", "payload": { "timestamp": "...", "session_id": "a1b2c3d4" } }
 { "type": "pong", "payload": { "timestamp": "...", "session_id": "a1b2c3d4" } }
+{ "type": "rate_limited", "payload": { "message": "Rate limit exceeded. Max 20 msg/s." } }
 { "type": "error", "payload": { "message": "No gestures provided" } }
 ```
 
@@ -326,6 +380,23 @@ Converts spoken English text into sign language gesture sequences.
 - **Fallback:** 72-word vocabulary with longest-match tokenization
 - **Features:** Multi-word phrase matching, fingerspelling for unknown words
 - **Example:** `"Hello, how are you?"` → `["WAVE_HELLO", "HOW", "BE", "POINT_FORWARD"]`
+
+### Translation Cache (`cache.py`)
+LRU cache with TTL for avoiding repeated LLM/processing calls.
+
+- **Max size:** 256 entries (configurable)
+- **TTL:** 1 hour (configurable)
+- **Separate namespaces:** Grammar corrections and sign translations
+- **Stats:** Tracks hits, misses, and hit rate percentage
+- **Clearable:** Via `DELETE /api/cache`
+
+### Rate Limiter (`rate_limiter.py`)
+Token bucket algorithm for per-client throttling.
+
+- **WebSocket:** 20 msg/s per client (configurable)
+- **REST API:** 30 req/s per IP, burst capacity 60
+- **Exempt:** `/health`, `/docs`, `/redoc` endpoints
+- **Response:** `429 Too Many Requests` with `Retry-After` header
 
 ### Session Manager (`session_manager.py`)
 Tracks each WebSocket connection with a unique session ID.
@@ -352,13 +423,60 @@ Manages the WebSocket connection pool.
 - Auto-cleanup of dead connections
 
 ### Middleware (`middleware.py`)
-- **RequestLoggingMiddleware:** Logs method, path, status, and response time for every request
-- **SecurityHeadersMiddleware:** Adds `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, etc.
+Four middleware layers (processed in order):
+
+1. **RequestIDMiddleware:** Assigns `X-Request-ID` (auto UUID or client-provided)
+2. **RateLimitMiddleware:** Per-IP REST API throttling
+3. **RequestLoggingMiddleware:** Logs `[req_id] METHOD /path → status (Xms)`
+4. **SecurityHeadersMiddleware:** Security headers on all responses
+
+### Error Handling
+- **Global exception handler:** Catches unhandled errors → `{"error": "internal_server_error", "message": "...", "request_id": "..."}`
+- **HTTP exception handler:** Structured JSON for 400/404/422/etc errors
+- **Rate limit errors:** `429` with `Retry-After` header and structured body
 
 ### Config (`config.py`)
 - Loads `.env` file via `python-dotenv`
 - Provides typed access to all settings
 - Configures structured logging at startup
+
+---
+
+## 📊 System Dashboard
+
+Access the live system dashboard at [http://localhost:3000/dashboard](http://localhost:3000/dashboard).
+
+**Features:**
+- Real-time system status and uptime
+- Translation and error counters
+- Cache hit rate and capacity (with clear button)
+- Active WebSocket session list
+- Auto-refreshing every 8 seconds
+- Deployment-aware (shows instructions on Vercel)
+
+---
+
+## 🧪 Testing
+
+### Run All Tests
+
+```bash
+cd backend
+.\venv\Scripts\activate
+python -m pytest tests/ -v
+```
+
+### Test Coverage
+
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| `test_grammar_engine.py` | 10 | Rule matching, case handling, partial match, empty input, gestures |
+| `test_translation_engine.py` | 10 | Word/phrase translation, skip words, vocabulary data |
+| `test_cache.py` | 13 | LRU eviction, TTL expiry, stats tracking, clear |
+| `test_rate_limiter.py` | 7 | Token bucket, per-client isolation, stale cleanup |
+| `test_api.py` | 13 | All REST endpoints (health, translate, vocab, cache, analytics) |
+| `test_middleware.py` | 8 | Rate limiting, request ID tracking, error responses |
+| **Total** | **61** | **All passing ✅** |
 
 ---
 
@@ -371,8 +489,11 @@ Manages the WebSocket connection pool.
   - No MediaPipe? → Simulation mode
   - No OpenAI? → Rule-based engine
   - No WebSocket? → Offline TTS
+  - No backend on Vercel? → Dashboard shows deployment instructions
+- **Production Ready:** Rate limiting, caching, error handling, request tracing
 - **Accessible:** Terminal-inspired UI with high contrast, keyboard navigable
-- **Observable:** Built-in analytics, session tracking, and request logging
+- **Observable:** Built-in analytics, dashboard, session tracking, and structured logging
+- **Tested:** 61 unit + integration tests covering all services and endpoints
 
 ---
 
@@ -402,33 +523,11 @@ npm run dev
 3. Open [http://localhost:3000](http://localhost:3000)
 4. Click **BOOT SYSTEM** to activate the pipeline
 5. Use the camera for sign language detection, or switch to Speech → Sign mode
+6. Open [http://localhost:3000/dashboard](http://localhost:3000/dashboard) to monitor the system
 
 ### Testing Without a Camera
 
 The system runs a **demo simulation** when the backend isn't connected, automatically playing through a sample gesture sequence with grammar processing and TTS output.
-
----
-
-## 📊 Monitoring
-
-### Health Check
-```bash
-curl http://localhost:8000/health
-```
-
-### Analytics Dashboard
-```bash
-curl http://localhost:8000/api/analytics
-```
-
-Returns: uptime, total translations, active sessions, average latency, and per-session breakdowns.
-
-### Active Sessions
-```bash
-curl http://localhost:8000/api/sessions
-```
-
-Returns: all connected clients with their session IDs, modes, request counts, and durations.
 
 ---
 

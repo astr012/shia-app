@@ -11,6 +11,7 @@ import Header from '@/components/SignAI/Header';
 import VisionMatrix from '@/components/SignAI/VisionMatrix';
 import QuickActions from '@/components/SignAI/QuickActions';
 import TranscriptLog from '@/components/SignAI/TranscriptLog';
+import SignPlayer from '@/components/SignAI/SignPlayer';
 import Footer from '@/components/SignAI/Footer';
 
 export default function Home() {
@@ -20,6 +21,9 @@ export default function Home() {
     mode,
     logs,
     wsStatus,
+    signSequence,
+    signSourceText,
+    signProcessingTime,
 
     // Pipeline actions
     startPipeline,
@@ -56,12 +60,21 @@ export default function Home() {
 
       {/* Main Terminal UI */}
       <main className="grid grid-cols-1 lg:grid-cols-12 gap-8 max-w-7xl mx-auto">
-        {/* Left Column: Vision + Quick Actions */}
+        {/* Left Column: Vision + Sign Player + Quick Actions */}
         <div className="lg:col-span-7 flex flex-col gap-4">
           <VisionMatrix
             isActive={isActive}
             onGestureResult={processGestureResult}
           />
+
+          {/* Sign Language Visualization Player */}
+          <SignPlayer
+            signSequence={signSequence}
+            sourceText={signSourceText}
+            processingTimeMs={signProcessingTime}
+            isVisible={isActive && signSequence.length > 0}
+          />
+
           <QuickActions
             isActive={isActive}
             wsStatus={wsStatus}
@@ -92,3 +105,4 @@ export default function Home() {
     </div>
   );
 }
+

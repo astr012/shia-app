@@ -47,6 +47,9 @@ interface PipelineState {
   lastSpokenText: string | null;
   wsStatus: string;
   fps: number;
+  signSequence: string[];
+  signSourceText: string;
+  signProcessingTime: number;
 }
 
 interface PipelineActions {
@@ -68,6 +71,9 @@ export function usePipeline(): PipelineState & PipelineActions {
   const [lastGesture, setLastGesture] = useState<string | null>(null);
   const [lastSpokenText, setLastSpokenText] = useState<string | null>(null);
   const [fps, setFps] = useState(0);
+  const [signSequence, setSignSequence] = useState<string[]>([]);
+  const [signSourceText, setSignSourceText] = useState('');
+  const [signProcessingTime, setSignProcessingTime] = useState(0);
 
   const lastGestureTime = useRef(0);
   const gestureBuffer = useRef<string[]>([]);
@@ -94,8 +100,15 @@ export function usePipeline(): PipelineState & PipelineActions {
         }
 
         case 'sign_animation': {
-          const { sign_sequence } = message.payload as { sign_sequence: string[] };
+          const { sign_sequence, source_text, processing_time_ms } = message.payload as {
+            sign_sequence: string[];
+            source_text?: string;
+            processing_time_ms?: number;
+          };
           addLog('SYSTEM', `[SIGN OUTPUT]: ${sign_sequence.join(' → ')}`);
+          setSignSequence(sign_sequence);
+          setSignSourceText(source_text || '');
+          setSignProcessingTime(processing_time_ms || 0);
           setIsProcessing(false);
           break;
         }
@@ -355,6 +368,9 @@ export function usePipeline(): PipelineState & PipelineActions {
     lastSpokenText,
     wsStatus,
     fps,
+    signSequence,
+    signSourceText,
+    signProcessingTime,
 
     // Actions
     startPipeline,

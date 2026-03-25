@@ -25,7 +25,7 @@ from typing import Optional, List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.config import settings
 from app.middleware import RequestLoggingMiddleware, SecurityHeadersMiddleware, RateLimitMiddleware, RequestIDMiddleware
@@ -37,6 +37,7 @@ from app.services.analytics import AnalyticsService
 from app.services.cache import TranslationCache
 from app.services.rate_limiter import RateLimiter
 from app.services.tts_engine import TTSEngine
+from app.routers import profile
 
 # ── Logging ──────────────────────────────────────────────────
 logger = logging.getLogger("signai")
@@ -68,6 +69,8 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+app.include_router(profile.router)
 
 
 # ── Middleware ───────────────────────────────────────────────
@@ -430,6 +433,37 @@ async def websocket_endpoint(websocket: WebSocket):
                     analytics.record_request(session.session_id, "manual_text")
                     await handle_manual_text(websocket, payload, session.session_id)
 
+                elif msg_type == "set_profile":
+                    b_dict = payload.get("bespoke_dictionary", {})
+                    session = session_mgr.get_session(websocket)
+                    if session:
+                        session.bespoke_dictionary = b_dict
+                    await send_ws(websocket, "profile_synced", {"status": "success"})
+
+                elif msg_type == "webrtc_signal":
+                    target_id = payload.get("target_id")
+                    signal_data = payload.get("signal_data")
+                    if target_id and signal_data:
+                        target_session = session_mgr.get_session_by_id(target_id)
+                        if target_session and target_session.websocket:
+                            await send_ws(target_session.websocket, "webrtc_signal", {
+                                "source_id": session.session_id,
+                                "signal_data": signal_data
+                            })
+                            
+                elif msg_type == "webrtc_relay":
+                    # Self-Healing Fallback: Symmetric NAT blocking direct hole-punching.
+                    # Bypassing WebRTC DataChannels over secure WebSocket relay.
+                    target_id = payload.get("target_id")
+                    relay_data = payload.get("relay_data")
+                    if target_id and relay_data:
+                        target_session = session_mgr.get_session_by_id(target_id)
+                        if target_session and target_session.websocket:
+                            await send_ws(target_session.websocket, "webrtc_relay", {
+                                "source_id": session.session_id,
+                                "relay_data": relay_data
+                            })
+                            
                 elif msg_type == "set_mode":
                     new_mode = payload.get("mode", "SIGN_TO_SPEECH")
                     session_mgr.set_mode(websocket, new_mode)
@@ -446,7 +480,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     await send_ws(websocket, "error", {"message": f"Unknown type: {msg_type}"})
 
             except json.JSONDecodeError:
-                await send_ws(websocket, "error", {"message": "Invalid JSON"})
+                await send_ws(websocket, "error", {"message": "Invalid JSON payload"})
+                session_mgr.record_error(websocket)
+                analytics.record_error(session.session_id)
+            except ValidationError as ve:
+                await send_ws(websocket, "error", {"message": "Payload validation failed", "details": ve.errors()})
                 session_mgr.record_error(websocket)
                 analytics.record_error(session.session_id)
 
@@ -464,12 +502,28 @@ async def websocket_endpoint(websocket: WebSocket):
 # PIPELINE HANDLERS
 # ══════════════════════════════════════════════════════════════
 
+# Elastic validation structure: Accpets plain strict strings, or complex multi-modal arrays.
+class MultiModalGesturePayload(BaseModel):
+    gestures: List[str] = Field(default_factory=list, description="Primary string sequences or legacy hand structs")
+    pose_markers: Optional[List[dict]] = Field(None, description="Raw pose estimation data matrices")
+    face_mesh: Optional[List[dict]] = Field(None, description="Facial grammar landmarks")
+    mode: Optional[str] = "SIGN_TO_SPEECH"
+    timestamp: Optional[float] = None
+
 async def handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str):
     """
     SIGN → SPEECH Pipeline:
     Gesture labels → Grammar Engine (LLM) → Natural text → Send for TTS
     """
-    gestures = payload.get("gestures", [])
+    # Self-Healing & Compatibility: Elastic parsing for both legacy hand gestures and future multi-modal arrays
+    try:
+        validated_payload = MultiModalGesturePayload(**payload)
+        gestures = validated_payload.gestures
+    except ValidationError as e:
+        logger.error(f"[Pipeline:{session_id}] Payload validation failed: {e}")
+        await send_ws(ws, "error", {"message": "Malformed gesture payload schema"})
+        return
+
     if not gestures:
         await send_ws(ws, "error", {"message": "No gestures provided"})
         return
@@ -534,21 +588,35 @@ async def handle_speech_input(ws: WebSocket, payload: dict, session_id: str):
     logger.info(f"[Pipeline:{session_id}] Speech input: {text}")
 
     # Check cache first, then translation engine
-    cached = cache.get_sign(text)
-    if cached:
-        sign_sequence = cached
-        duration_ms = (time.perf_counter() - start) * 1000
-        logger.info(f"[Pipeline:{session_id}] Cache HIT: {sign_sequence} ({duration_ms:.1f}ms)")
-    else:
-        sign_sequence = await translation_engine.speech_to_sign(text)
-        cache.set_sign(text, sign_sequence)
-        duration_ms = (time.perf_counter() - start) * 1000
-        logger.info(f"[Pipeline:{session_id}] Sign sequence: {sign_sequence} ({duration_ms:.1f}ms)")
+    session = session_mgr.get_session(ws)
+    b_dict = session.bespoke_dictionary if session else {}
+
+    # Check cache (omitting bespoke dict from global cache key, or forcing bypass if bespoke dict is heavy)
+    cached_signs = cache.get_sign(text) if not b_dict else None
+    
+    if cached_signs:
+        logger.debug(f"[Pipeline:{session_id}] Cache hit: {text}")
+        await send_ws(ws, "sign_animation", {
+            "sign_sequence": cached_signs,
+            "source_text": text,
+            "processing_time_ms": round((time.perf_counter() - start) * 1000, 1),
+        })
+        return
+
+    # Translate with active custom context
+    signs = await translation_engine.speech_to_sign(text, custom_dict=b_dict)
+    
+    # Cache the result if no bespoke dictionary was used
+    if not b_dict:
+        cache.set_sign(text, signs)
+    
+    duration_ms = (time.perf_counter() - start) * 1000
+    logger.info(f"[Pipeline:{session_id}] Sign sequence: {signs} ({duration_ms:.1f}ms)")
 
     analytics.record_latency("translation", duration_ms)
 
     await send_ws(ws, "sign_animation", {
-        "sign_sequence": sign_sequence,
+        "sign_sequence": signs,
         "source_text": text,
         "processing_time_ms": round(duration_ms, 1),
     })

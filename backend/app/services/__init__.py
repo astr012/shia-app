@@ -9,6 +9,7 @@ from app.services.session_manager import SessionManager
 from app.services.analytics import AnalyticsService
 from app.services.cache import TranslationCache
 from app.services.rate_limiter import RateLimiter
+from app.services.tts_engine import TTSEngine
 
 __all__ = [
     "GrammarEngine",
@@ -18,4 +19,5 @@ __all__ = [
     "AnalyticsService",
     "TranslationCache",
     "RateLimiter",
+    "TTSEngine",
 ]

@@ -36,6 +36,7 @@ from app.services.session_manager import SessionManager
 from app.services.analytics import AnalyticsService
 from app.services.cache import TranslationCache
 from app.services.rate_limiter import RateLimiter
+from app.services.tts_engine import TTSEngine
 
 # ── Logging ──────────────────────────────────────────────────
 logger = logging.getLogger("signai")
@@ -131,6 +132,7 @@ ws_limiter = RateLimiter(
     rate=settings.WS_MAX_MESSAGES_PER_SECOND,
     capacity=settings.WS_MAX_MESSAGES_PER_SECOND * 2,
 )
+tts_engine = TTSEngine()
 
 HEARTBEAT_INTERVAL = 30  # seconds
 
@@ -304,6 +306,52 @@ async def clear_cache():
     return {"status": "cleared"}
 
 
+# ── Text-to-Speech ───────────────────────────────────────────
+
+import base64
+
+class TTSRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000, description="Text to synthesize")
+    voice: Optional[str] = Field(None, description="Voice name or alias")
+
+@app.post("/api/tts", tags=["TTS"])
+async def synthesize_speech(request: TTSRequest):
+    """
+    Server-side TTS — generates natural audio using Microsoft Neural Voices.
+    Returns base64-encoded MP3 audio that sounds identical on ALL devices.
+    Falls back to text-only response if edge-tts is not installed.
+    """
+    audio_bytes = await tts_engine.synthesize(request.text, request.voice)
+
+    if audio_bytes:
+        audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+        return {
+            "audio": audio_b64,
+            "format": "mp3",
+            "engine": "edge-tts",
+            "voice": request.voice or tts_engine.voice,
+            "text": request.text,
+        }
+    else:
+        # Fallback: tell frontend to use browser TTS
+        return {
+            "audio": None,
+            "format": "browser-tts",
+            "engine": "browser-fallback",
+            "text": request.text,
+        }
+
+@app.get("/api/tts/voices", tags=["TTS"])
+async def list_tts_voices():
+    """List all available neural voices for TTS."""
+    voices = await tts_engine.list_voices()
+    return {
+        "voices": voices,
+        "total": len(voices),
+        "engine": tts_engine.get_status(),
+    }
+
+
 # ══════════════════════════════════════════════════════════════
 # WEBSOCKET ENDPOINT (Real-time Pipeline)
 # ══════════════════════════════════════════════════════════════
@@ -452,11 +500,21 @@ async def handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str)
         "cached": cached is not None,
     })
 
-    # Step 3: Send final translation
+    # Step 3: Generate TTS audio server-side (natural voice for ALL devices)
+    audio_b64 = None
+    if tts_engine.is_available:
+        audio_bytes = await tts_engine.synthesize(corrected_text)
+        if audio_bytes:
+            import base64
+            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+    # Step 4: Send final translation + audio
     await send_ws(ws, "translation_result", {
         "translated_text": corrected_text,
         "source_gesture": " → ".join(gestures),
         "processing_time_ms": round(duration_ms, 1),
+        "audio": audio_b64,
+        "audio_format": "mp3" if audio_b64 else None,
     })
 
 

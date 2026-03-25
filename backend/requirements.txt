@@ -15,6 +15,9 @@ openai>=1.12.0,<2.0.0
 python-dotenv>=1.0.0,<2.0.0
 python-multipart>=0.0.6,<1.0.0
 
+# Natural TTS (Microsoft Neural Voices - FREE, works server-side for ALL devices)
+edge-tts>=6.1.0
+
 # Premium TTS (optional)
 # elevenlabs>=1.0.0
 

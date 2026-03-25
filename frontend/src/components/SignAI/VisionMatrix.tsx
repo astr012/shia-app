@@ -28,6 +28,7 @@ export default function VisionMatrix({ isActive, onGestureResult }: VisionMatrix
     lastResult,
     startCamera,
     stopCamera,
+    deviceTier,
   } = useMediaPipe({
     videoRef,
     canvasRef,
@@ -103,12 +104,12 @@ export default function VisionMatrix({ isActive, onGestureResult }: VisionMatrix
           style={{ transform: 'scaleX(-1)' }}  /* Mirror for selfie view */
         />
 
-        {/* Canvas Overlay (MediaPipe landmark drawings) */}
+        {/* Canvas Overlay (MediaPipe landmark drawings) — adaptive resolution */}
         <canvas
           ref={canvasRef}
           className={`absolute inset-0 w-full h-full z-10 ${isActive && isTracking ? '' : 'hidden'}`}
-          width={1280}
-          height={720}
+          width={deviceTier === 'low' ? 320 : 640}
+          height={deviceTier === 'low' ? 240 : 480}
           style={{ transform: 'scaleX(-1)' }}  /* Mirror to match video */
         />
 
@@ -208,7 +209,7 @@ export default function VisionMatrix({ isActive, onGestureResult }: VisionMatrix
                 transition={{ duration: 3, repeat: Infinity }}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                REC
+                REC | {deviceTier.toUpperCase()}
               </motion.div>
             </motion.div>
           ) : null}

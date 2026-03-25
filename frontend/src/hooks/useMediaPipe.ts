@@ -238,13 +238,13 @@ export function useMediaPipe({
   const [fps, setFps] = useState(0);
   const [lastResult, setLastResult] = useState<HandTrackingResult | null>(null);
 
-  // Detect device capability once
-  const [deviceProfile] = useState(() => detectDeviceProfile());
+  // Detect device capability once; make it mutable for auto-downgrade self-healing
+  const [deviceProfile, setDeviceProfile] = useState(() => detectDeviceProfile());
 
   const streamRef = useRef<MediaStream | null>(null);
   const animationRef = useRef<number | null>(null);
   const handsRef = useRef<unknown>(null);
-  const fpsCounter = useRef({ frames: 0, lastTime: performance.now() });
+  const fpsCounter = useRef({ frames: 0, lastTime: performance.now(), lowFpsStreak: 0 });
   const frameCount = useRef(0);
   const stabilizerRef = useRef(new GestureStabilizer(deviceProfile.smoothingWindow));
 
@@ -300,7 +300,28 @@ export function useMediaPipe({
           fpsCounter.current.frames++;
           const now = performance.now();
           if (now - fpsCounter.current.lastTime >= 1000) {
-            setFps(fpsCounter.current.frames * deviceProfile.frameSkip);
+            const currentFps = fpsCounter.current.frames * deviceProfile.frameSkip;
+            setFps(currentFps);
+
+            // Auto-calibrating downgrade logic (Self-Healing)
+            if (deviceProfile.tier !== 'low' && currentFps < 15) {
+              fpsCounter.current.lowFpsStreak++;
+              if (fpsCounter.current.lowFpsStreak >= 3) {
+                console.warn('[Self-Healing] Dropped frames detected, downgrading resolution/complexity.');
+                setDeviceProfile({
+                  tier: 'low',
+                  cameraWidth: 320,
+                  cameraHeight: 240,
+                  modelComplexity: 0,
+                  frameSkip: 3,
+                  smoothingWindow: 2,
+                });
+                fpsCounter.current.lowFpsStreak = 0;
+              }
+            } else {
+              fpsCounter.current.lowFpsStreak = 0;
+            }
+
             fpsCounter.current.frames = 0;
             fpsCounter.current.lastTime = now;
           }
@@ -427,7 +448,7 @@ export function useMediaPipe({
     setLastResult(null);
   }, [videoRef]);
 
-  // Start/stop based on enabled prop
+  // Start/stop based on enabled prop or tier change
   useEffect(() => {
     if (enabled) {
       startCamera();
@@ -439,7 +460,7 @@ export function useMediaPipe({
       stopCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled]);
+  }, [enabled, deviceProfile.tier]);
 
   return {
     isLoading,

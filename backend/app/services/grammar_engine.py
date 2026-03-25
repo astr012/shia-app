@@ -14,6 +14,7 @@
 # ============================================================
 
 import os
+import time
 import logging
 from typing import Optional
 
@@ -66,6 +67,8 @@ class GrammarEngine:
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         self.client = None
+        self._api_failures = 0
+        self._blacklisted_until = 0.0
 
         if self.api_key:
             try:
@@ -90,12 +93,18 @@ class GrammarEngine:
         if not raw_text.strip():
             return ""
 
-        # Try LLM first
-        if self.client:
+        # Try LLM first if not blacklisted
+        if self.client and time.time() > self._blacklisted_until:
             try:
-                return await self._process_with_llm(raw_text)
+                result = await self._process_with_llm(raw_text)
+                self._api_failures = 0  # reset on success
+                return result
             except Exception as e:
-                logger.error(f"LLM processing failed: {e}. Falling back to rules.")
+                self._api_failures += 1
+                logger.error(f"[Self-Healing] LLM processing failed: {e}. Failure count: {self._api_failures}")
+                if self._api_failures >= 2:
+                    self._blacklisted_until = time.time() + 60.0
+                    logger.warning("[Self-Healing] Stochastic route blacklisted for 60 seconds. Utilizing static logic.")
 
         # Fallback to rule-based
         return self._process_with_rules(raw_text)
@@ -156,5 +165,7 @@ Rules:
     def get_status(self) -> str:
         """Return engine status."""
         if self.client:
+            if time.time() < self._blacklisted_until:
+                return f"openai:{self.model} (blacklisted)"
             return f"openai:{self.model}"
         return "rule-based"

@@ -70,6 +70,22 @@ For every module, an uncompromising engineering standard is enforced: Every feat
 - **Pipeline Connectivity Audit:** WebRTC datachannel flows circumvent the traditional WebSocket FastAPI boundary. Ensure the translation orchestration syncs properly via RTCDataChannels.
 - **Self-Healing & Fail-Safe Architecture:** "Hole-Punching" state awareness. If symmetric NAT routers block the primary WebRTC pathways, the application architecture instantly recognizes the failure and reroutes video data frames transparently over a secure fallback TURN server or standard WebSocket relay.
 
+## Phase 3: Production & Autonomous Expansion (Future Exploration)
+
+### 9. 3D WebGL Avatar Rendering (Speech-to-Sign)
+**Status:** Brainstorming
+**Description:** Replacing static 2D vector outputs with real-time 3D glTF/GLB models using React Three Fiber. Essential for accurate spatial grammar and facial expression tracking inherent to advanced ASL.
+- **E2E Audit Task:** Shader compilation timeout audits across legacy integrated graphics processors (GPUs).
+- **Pipeline Connectivity Audit:** Synchronize 60fps avatar bone manipulation with incoming LLM context chunk streams without interpolation clipping or drift.
+- **Self-Healing & Fail-Safe Architecture:** WebGL Context Loss Recovery. If the client browser forcibly kills the WebGL context due to VRAM starvation, the engine isolates the component and instantly fails over to lightweight 2D CSS-based subtitle animations, alerting the user but continuing communication.
+
+### 10. Federated Edge Training (Micro-ML)
+**Status:** Brainstorming
+**Description:** Extreme data privacy. The browser retrains bespoke regional gesture classifiers locally (via TensorFlow.js) without transmitting raw camera biometric data or user profiles to the FastAPI cloud.
+- **E2E Audit Task:** Training-data poisoning simulation. Inject deliberately corrupted weight gradients over 100 epochs to verify if the local error-bounded model rapidly decays.
+- **Pipeline Connectivity Audit:** Evaluate IndexedDB synchronization bottlenecks when committing, serializing, and rolling back gigabyte-heavy tensor weight binaries.
+- **Self-Healing & Fail-Safe Architecture:** Thermal-Aware Gradient Halting. If the training compilation loop causes device frame rates to collapse or triggers thermal throttling alerts, the federated loop aborts instantly, caching partial weights to IndexedDB, and falls back to cheap static inference rules.
+
 ---
 
 ## Execution Mandate

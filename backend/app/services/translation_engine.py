@@ -150,6 +150,11 @@ class TranslationEngine:
         if not text.strip():
             return []
 
+        # Payload Normalization Pipeline (Self-Healing)
+        if self._is_garbled(text):
+            logger.warning(f"[Self-Healing] Garbled speech detected: '{text}'. Triggering clarification loop.")
+            return ["CLARIFY_PLEASE"]
+
         # Try LLM for better phrase decomposition
         if self.client:
             try:
@@ -159,6 +164,30 @@ class TranslationEngine:
 
         # Vocabulary-based fallback
         return self._translate_with_vocabulary(text)
+
+    def _is_garbled(self, text: str) -> bool:
+        """
+        Self-Healing: Detects heavily garbled or non-parsable speech payloads.
+        Returns True if the text appears to be noise or invalid STT reads.
+        """
+        cleaned = text.strip()
+        if not cleaned:
+            return True
+            
+        words = cleaned.split()
+        if not words:
+            return True
+            
+        # Analyze vowel presence as a heuristic for valid English words
+        vowel_less_words = sum(1 for w in words if not any(v in w.lower() for v in 'aeiouy'))
+        if vowel_less_words > len(words) * 0.5 and len(words) > 1:
+            return True
+            
+        # Check for uncharacteristically long contiguous streams (spam/noise)
+        if any(len(w) > 25 for w in words):
+            return True
+            
+        return False
 
     async def _translate_with_llm(self, text: str) -> List[str]:
         """Use OpenAI to decompose text into sign gestures."""
@@ -226,7 +255,7 @@ Rules:
                 i += 1
 
         logger.info(f"Vocabulary translation: '{text}' → {signs}")
-        return signs if signs else ["UNKNOWN_GESTURE"]
+        return signs if signs else ["CLARIFY_PLEASE"]
 
     def get_status(self) -> str:
         """Return engine status."""

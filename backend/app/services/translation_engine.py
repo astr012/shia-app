@@ -137,7 +137,7 @@ class TranslationEngine:
         else:
             logger.info("Translation Engine using vocabulary-based translation.")
 
-    async def speech_to_sign(self, text: str) -> List[str]:
+    async def speech_to_sign(self, text: str, custom_dict: Optional[dict] = None) -> List[str]:
         """
         Convert spoken English text into a sequence of sign gesture names.
         
@@ -158,12 +158,13 @@ class TranslationEngine:
         # Try LLM for better phrase decomposition
         if self.client:
             try:
-                return await self._translate_with_llm(text)
+                # Provide bespoke dictionary data to the LLM context if available
+                return await self._translate_with_llm(text, custom_dict)
             except Exception as e:
                 logger.error(f"LLM translation failed: {e}. Using vocabulary fallback.")
 
-        # Vocabulary-based fallback
-        return self._translate_with_vocabulary(text)
+        # Vocabulary-based fallback securely merges user config locally
+        return self._translate_with_vocabulary(text, custom_dict)
 
     def _is_garbled(self, text: str) -> bool:
         """
@@ -189,14 +190,14 @@ class TranslationEngine:
             
         return False
 
-    async def _translate_with_llm(self, text: str) -> List[str]:
+    async def _translate_with_llm(self, text: str, custom_dict: Optional[dict] = None) -> List[str]:
         """Use OpenAI to decompose text into sign gestures."""
         available_signs = ", ".join(sorted(set(SIGN_VOCABULARY.values())))
-
+        
         system_prompt = f"""You are a spoken English to sign language translator.
 Convert the given English text into a sequence of sign language gestures.
 
-Available signs: {available_signs}
+Available global signs: {available_signs}
 
 Rules:
 - Output ONLY a comma-separated list of sign names from the available list
@@ -204,8 +205,9 @@ Rules:
 - Use the closest available sign for each concept
 - Keep the sequence in a logical order for sign language grammar
 - Sign language grammar is different: questions go at the end, time references at the beginning
-- Example: "Are you hungry?" → "POINT_FORWARD, HUNGRY, WHAT"
 """
+        if custom_dict:
+            system_prompt += f"\n[User Bespoke Dictionary Override]:\n{custom_dict}\nMap these exactly if the concept matches."
 
         response = await self.client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
@@ -222,8 +224,14 @@ Rules:
         logger.info(f"LLM sign translation: '{text}' → {signs}")
         return signs
 
-    def _translate_with_vocabulary(self, text: str) -> List[str]:
-        """Vocabulary-based translation (offline fallback)."""
+    def _translate_with_vocabulary(self, text: str, custom_dict: Optional[dict] = None) -> List[str]:
+        """Vocabulary-based translation (offline fallback) with non-polluting local dictionary merging."""
+        # Securely merge custom_dict with SIGN_VOCABULARY for this request scope ONLY
+        local_vocab = {**SIGN_VOCABULARY}
+        if custom_dict:
+            for k, v in custom_dict.items():
+                local_vocab[k] = v[0] if isinstance(v, list) and v else v
+
         # Clean and tokenize
         cleaned = text.lower().strip()
         for char in '.,!?;:\'"()[]{}':
@@ -238,8 +246,8 @@ Rules:
             matched = False
             for length in range(min(3, len(words) - i), 0, -1):
                 phrase = " ".join(words[i:i + length])
-                if phrase in SIGN_VOCABULARY:
-                    signs.append(SIGN_VOCABULARY[phrase])
+                if phrase in local_vocab:
+                    signs.append(local_vocab[phrase])
                     i += length
                     matched = True
                     break
@@ -247,8 +255,8 @@ Rules:
             if not matched:
                 word = words[i]
                 if word not in SKIP_WORDS:
-                    if word in SIGN_VOCABULARY:
-                        signs.append(SIGN_VOCABULARY[word])
+                    if word in local_vocab:
+                        signs.append(local_vocab[word])
                     else:
                         # Fingerspell unknown words
                         signs.append(f"SPELL:{word.upper()}")

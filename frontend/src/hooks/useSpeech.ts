@@ -159,6 +159,15 @@ export function useSpeechToText({
   const [isSupported, setIsSupported] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
+  // Retry state to prevent infinite error loops on ALL devices
+  const retryCount = useRef(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hadFatalError = useRef(false);
+  const intentionalStop = useRef(false);
+
+  const MAX_RETRIES = 3;
+  const FATAL_ERRORS = ['network', 'not-allowed', 'service-not-allowed', 'language-not-supported'];
+
   // Check browser support
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -178,6 +187,11 @@ export function useSpeechToText({
       return;
     }
 
+    // Reset state for fresh start
+    hadFatalError.current = false;
+    retryCount.current = 0;
+    intentionalStop.current = false;
+
     // Create new recognition instance
     const recognition = new SpeechRecognition();
     recognition.continuous = continuous;
@@ -186,6 +200,7 @@ export function useSpeechToText({
 
     recognition.onstart = () => {
       setIsListening(true);
+      retryCount.current = 0; // Reset retries on successful start
       console.log('[STT] Listening started');
     };
 
@@ -214,24 +229,67 @@ export function useSpeechToText({
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      console.error('[STT] Error:', event.error);
-      onError?.(event.error);
-      if (event.error !== 'no-speech') {
+      const err = event.error;
+
+      // Fatal errors: stop retrying entirely
+      if (FATAL_ERRORS.includes(err)) {
+        hadFatalError.current = true;
         setIsListening(false);
+
+        if (err === 'network') {
+          console.warn('[STT] Network error — requires internet for Chrome Speech API. Stopping retries.');
+          onError?.('Speech recognition requires internet connection (Chrome sends audio to Google servers). Use manual text input instead.');
+        } else if (err === 'not-allowed') {
+          console.warn('[STT] Microphone permission denied.');
+          onError?.('Microphone access denied. Please allow microphone in browser settings.');
+        } else {
+          console.error('[STT] Fatal error:', err);
+          onError?.(err);
+        }
+        return;
       }
+
+      // Non-fatal errors (no-speech, aborted): just log, don't stop
+      if (err === 'no-speech') {
+        // Totally normal — user just isn't speaking. Don't spam errors.
+        return;
+      }
+
+      console.warn('[STT] Non-fatal error:', err);
+      onError?.(err);
+      setIsListening(false);
     };
 
     recognition.onend = () => {
       setIsListening(false);
-      console.log('[STT] Listening ended');
 
-      // Auto-restart if continuous mode is on
+      // Don't restart if: intentionally stopped, fatal error, or max retries exceeded
+      if (intentionalStop.current || hadFatalError.current) {
+        console.log('[STT] Stopped (intentional or fatal error).');
+        return;
+      }
+
+      // Auto-restart with exponential backoff
       if (continuous && recognitionRef.current) {
-        try {
-          recognitionRef.current.start();
-        } catch {
-          // Already started or other error
+        if (retryCount.current >= MAX_RETRIES) {
+          console.warn(`[STT] Max retries (${MAX_RETRIES}) exceeded. Stopping.`);
+          onError?.('Speech recognition stopped after multiple failures. Click to retry.');
+          return;
         }
+
+        const backoffMs = Math.min(1000 * Math.pow(2, retryCount.current), 8000);
+        retryCount.current++;
+        console.log(`[STT] Restarting in ${backoffMs}ms (attempt ${retryCount.current}/${MAX_RETRIES})`);
+
+        retryTimer.current = setTimeout(() => {
+          if (recognitionRef.current && !intentionalStop.current && !hadFatalError.current) {
+            try {
+              recognitionRef.current.start();
+            } catch {
+              // Already started or destroyed
+            }
+          }
+        }, backoffMs);
       }
     };
 
@@ -245,6 +303,14 @@ export function useSpeechToText({
   }, [continuous, interimResults, language, onResult, onError]);
 
   const stopListening = useCallback(() => {
+    intentionalStop.current = true;
+    hadFatalError.current = false;
+
+    if (retryTimer.current) {
+      clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+    }
+
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       recognitionRef.current = null;
@@ -256,6 +322,10 @@ export function useSpeechToText({
   // Clean up on unmount
   useEffect(() => {
     return () => {
+      intentionalStop.current = true;
+      if (retryTimer.current) {
+        clearTimeout(retryTimer.current);
+      }
       if (recognitionRef.current) {
         recognitionRef.current.stop();
         recognitionRef.current = null;

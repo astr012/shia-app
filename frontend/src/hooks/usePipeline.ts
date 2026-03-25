@@ -33,7 +33,7 @@ import { createLogEntry } from '@/lib/utils';
 // ── Configuration ───────────────────────────────────────────
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws';
-const GESTURE_DEBOUNCE_MS = 1500;  // Minimum time between gesture sends
+const GESTURE_DEBOUNCE_MS = 800;   // Fast response on all devices
 const GESTURE_CONFIDENCE_THRESHOLD = 0.75;
 
 // ── Pipeline State ──────────────────────────────────────────
@@ -84,17 +84,26 @@ export function usePipeline(): PipelineState & PipelineActions {
     (message: WSMessage) => {
       switch (message.type) {
         case 'translation_result': {
-          const { translated_text, source_gesture } = message.payload as {
+          const { translated_text, source_gesture, audio, audio_format } = message.payload as {
             translated_text: string;
             source_gesture: string;
+            audio?: string | null;
+            audio_format?: string | null;
           };
           addLog('SYSTEM', `[TRANSLATED]: "${translated_text}" (from: ${source_gesture})`);
           setIsProcessing(false);
 
-          // If SIGN_TO_SPEECH mode, speak the result
+          // If SIGN_TO_SPEECH mode, play audio
           if (mode === 'SIGN_TO_SPEECH') {
-            speak(translated_text);
-            addLog('SYSTEM', '[AUDIO SYNTHESIZED & PLAYED]');
+            if (audio && audio_format === 'mp3') {
+              // Server-side TTS — natural voice, identical on ALL devices
+              playServerAudio(audio);
+              addLog('SYSTEM', '[AUDIO]: Natural voice (server-generated)');
+            } else {
+              // Fallback: browser TTS
+              speak(translated_text);
+              addLog('SYSTEM', '[AUDIO]: Browser TTS (fallback)');
+            }
           }
           break;
         }
@@ -221,7 +230,7 @@ export function usePipeline(): PipelineState & PipelineActions {
             timestamp: Date.now(),
           });
         }
-      }, 2000); // 2s of no new gestures = flush
+      }, 1200); // 1.2s of no new gestures = flush (was 2s — faster for all devices)
     },
     [isActive, mode, wsSend]
   );
@@ -324,6 +333,27 @@ export function usePipeline(): PipelineState & PipelineActions {
 
   const clearLogs = useCallback(() => {
     setLogs([createLogEntry('SYSTEM', 'LOGS CLEARED.')]);
+  }, []);
+
+  // ── Server-side Audio Playback (natural voice on ALL devices) ──
+  const playServerAudio = useCallback((base64Audio: string) => {
+    try {
+      const audioBytes = Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0));
+      const blob = new Blob([audioBytes], { type: 'audio/mpeg' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        // Fallback to browser TTS if audio fails
+        console.warn('[Audio] Server audio failed, using browser TTS');
+      };
+      audio.play().catch(() => {
+        console.warn('[Audio] Autoplay blocked, using browser TTS');
+      });
+    } catch (e) {
+      console.error('[Audio] Failed to play server audio:', e);
+    }
   }, []);
 
   // ── Demo simulation when backend is not connected ─────────

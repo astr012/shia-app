@@ -376,7 +376,8 @@ async def websocket_endpoint(websocket: WebSocket):
       - pong: Keepalive response
       - error: Error details
     """
-    await manager.connect(websocket)
+    if not await manager.connect(websocket):
+        return
     session = session_mgr.create_session(websocket)
     analytics.register_session(session.session_id)
 
@@ -397,6 +398,7 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             raw = await websocket.receive_text()
+            manager.record_activity(websocket)
 
             # Rate limiting check
             if not ws_limiter.check(session.session_id):

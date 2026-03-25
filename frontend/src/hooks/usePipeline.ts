@@ -4,22 +4,15 @@
 // PIPELINE ORCHESTRATOR
 // The central hook that wires all pipeline layers together:
 //
-//   ┌───────────────┐    ┌───────────────┐    ┌────────────────┐
-//   │  Camera/Mic   │───▶│   MediaPipe/  │───▶│   WebSocket    │
-//   │  (Input)      │    │   STT Engine  │    │   Transport    │
-//   └───────────────┘    └───────────────┘    └───────┬────────┘
-//                                                     │
-//                                                     ▼
-//                                             ┌───────────────┐
-//                                             │  FastAPI       │
-//                                             │  (Grammar AI) │
-//                                             └───────┬───────┘
-//                                                     │
-//                                                     ▼
-//   ┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-//   │  Speaker/     │◀───│   TTS Engine  │◀───│   WebSocket   │
-//   │  Screen       │    │   / Sign Anim │    │   Response    │
-//   └───────────────┘    └───────────────┘    └───────────────┘
+//   ```mermaid
+//   graph TD
+//       A["Camera/Mic (Input)"] --> B["MediaPipe / STT Engine"]
+//       B --> C["WebSocket Transport"]
+//       C --> D["FastAPI (Grammar AI)"]
+//       D --> E["WebSocket Response"]
+//       E --> F["TTS Engine / Sign Anim"]
+//       F --> G["Speaker / Screen"]
+//   ```
 //
 // ============================================================
 

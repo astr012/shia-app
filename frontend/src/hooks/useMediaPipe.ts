@@ -28,6 +28,7 @@ interface UseMediaPipeOptions {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   enabled: boolean;
+  enableMultiModal?: boolean; // Phase 2: Pose + Face Mesh expansion
   onResult?: (result: HandTrackingResult) => void;
   onError?: (error: string) => void;
   maxHands?: number;
@@ -226,6 +227,7 @@ export function useMediaPipe({
   videoRef,
   canvasRef,
   enabled,
+  enableMultiModal = false,
   onResult,
   onError,
   maxHands = 1,       // Default 1 hand for better performance
@@ -237,6 +239,10 @@ export function useMediaPipe({
   const [error, setError] = useState<string | null>(null);
   const [fps, setFps] = useState(0);
   const [lastResult, setLastResult] = useState<HandTrackingResult | null>(null);
+  
+  // Phase 2: Multi-Modal state
+  const [multiModalEmergencyShed, setMultiModalEmergencyShed] = useState(false);
+  const actualMultiModal = enableMultiModal && !multiModalEmergencyShed;
 
   // Detect device capability once; make it mutable for auto-downgrade self-healing
   const [deviceProfile, setDeviceProfile] = useState(() => detectDeviceProfile());
@@ -278,6 +284,27 @@ export function useMediaPipe({
         const { Hands } = await import('@mediapipe/hands');
         // @ts-ignore - MediaPipe packages are optional runtime dependencies
         const { Camera } = await import('@mediapipe/camera_utils');
+        
+        let fmTracker: any = null;
+        let poseTracker: any = null;
+
+        if (actualMultiModal && deviceProfile.tier !== 'low') {
+          try {
+            // @ts-ignore
+            const fm = await import('@mediapipe/face_mesh');
+            // @ts-ignore
+            const pt = await import('@mediapipe/pose');
+            
+            fmTracker = fm.FaceMesh ? new fm.FaceMesh({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` }) : null;
+            poseTracker = pt.Pose ? new pt.Pose({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` }) : null;
+            
+            if (fmTracker) fmTracker.setOptions({ maxNumFaces: 1, minDetectionConfidence });
+            if (poseTracker) poseTracker.setOptions({ modelComplexity: deviceProfile.modelComplexity, minDetectionConfidence });
+            console.log('[Phase 2: Vision Expansion] Face Mesh & Pose models initialized.');
+          } catch(e) {
+            console.warn('[MediaPipe] Multi-modal extensions not available', e);
+          }
+        }
 
         const hands = new Hands({
           locateFile: (file: string) =>
@@ -303,8 +330,15 @@ export function useMediaPipe({
             const currentFps = fpsCounter.current.frames * deviceProfile.frameSkip;
             setFps(currentFps);
 
-            // Auto-calibrating downgrade logic (Self-Healing)
-            if (deviceProfile.tier !== 'low' && currentFps < 15) {
+            // Phase 2: Predictive Thermal/Frame Monitoring (Self-Healing)
+            if (actualMultiModal && currentFps < 10) {
+              fpsCounter.current.lowFpsStreak++;
+              if (fpsCounter.current.lowFpsStreak >= 2) {
+                console.warn('[Self-Healing] Thermal/Frame distress detected. Shedding Face and Pose models, persisting purely on Hands tracking.');
+                setMultiModalEmergencyShed(true);
+                fpsCounter.current.lowFpsStreak = 0;
+              }
+            } else if (deviceProfile.tier !== 'low' && currentFps < 15) {
               fpsCounter.current.lowFpsStreak++;
               if (fpsCounter.current.lowFpsStreak >= 3) {
                 console.warn('[Self-Healing] Dropped frames detected, downgrading resolution/complexity.');
@@ -364,8 +398,14 @@ export function useMediaPipe({
         // Start camera feed into MediaPipe
         const camera = new Camera(videoRef.current, {
           onFrame: async () => {
-            if (handsRef.current && videoRef.current) {
-              await (handsRef.current as { send: (opts: { image: HTMLVideoElement }) => Promise<void> }).send({ image: videoRef.current });
+            if (videoRef.current) {
+               if (handsRef.current) {
+                 await (handsRef.current as any).send({ image: videoRef.current });
+               }
+               if (actualMultiModal) {
+                 if (fmTracker) await fmTracker.send({ image: videoRef.current }).catch(() => {});
+                 if (poseTracker) await poseTracker.send({ image: videoRef.current }).catch(() => {});
+               }
             }
           },
           width: deviceProfile.cameraWidth,
@@ -460,7 +500,7 @@ export function useMediaPipe({
       stopCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, deviceProfile.tier]);
+  }, [enabled, deviceProfile.tier, actualMultiModal]);
 
   return {
     isLoading,

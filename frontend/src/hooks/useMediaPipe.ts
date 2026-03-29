@@ -444,11 +444,11 @@ export function useMediaPipe({
             const currentFps = fpsCounter.current.frames * deviceProfile.frameSkip;
             setFps(currentFps);
             
-            // Thermal/FPS Shedding: If FPS drops below 15 for 5 seconds, shed heavy models
-            if (currentFps < 15) {
+            // Thermal/FPS Shedding: If FPS drops below 8 for 5 seconds, shed Pose model
+            if (currentFps < 8) {
               fpsCounter.current.lowFpsTicks++;
               if (fpsCounter.current.lowFpsTicks >= 5 && !shedModelsRef.current) {
-                console.warn('[MediaPipe] Thermal/FPS drop detected. Shedding Pose and Face Mesh models.');
+                console.warn('[MediaPipe] Thermal/FPS drop detected. Shedding Pose model to recover performance.');
                 shedModelsRef.current = true;
                 setIsShedding(true);
               }
@@ -506,7 +506,7 @@ export function useMediaPipe({
               const promises = [];
               if (handsRef.current) promises.push((handsRef.current as any).send({ image: videoRef.current }));
               if (poseRef.current && !shedModelsRef.current) promises.push((poseRef.current as any).send({ image: videoRef.current }));
-              if (faceMeshRef.current && !shedModelsRef.current) promises.push((faceMeshRef.current as any).send({ image: videoRef.current }));
+              if (faceMeshRef.current) promises.push((faceMeshRef.current as any).send({ image: videoRef.current }));
               await Promise.all(promises);
             }
           },

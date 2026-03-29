@@ -99,8 +99,8 @@ export function useWebSocket({
         }
       };
 
-      ws.onerror = (error) => {
-        console.error('[WS] Error:', error);
+      ws.onerror = (event) => {
+        console.error('[WS] Connection Error', event);
         updateStatus('error');
       };
 

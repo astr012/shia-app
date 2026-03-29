@@ -41,9 +41,15 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())[:12]
         request.state.request_id = request_id
 
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        return response
+        # Propagate to structured logger
+        from app.services.logging import correlation_id
+        token = correlation_id.set(request_id)
+        try:
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = request_id
+            return response
+        finally:
+            correlation_id.reset(token)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

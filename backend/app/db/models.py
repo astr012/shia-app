@@ -7,6 +7,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
     dialect = Column(String, default="ASL")  # e.g., ASL, BSL, ISL
     preferences = Column(JSON, default={})  # Store UI preferences
 

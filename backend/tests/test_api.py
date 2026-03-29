@@ -127,10 +127,10 @@ class TestCacheEndpoint:
         assert "hit_rate_pct" in data
 
     @pytest.mark.asyncio
-    async def test_cache_clear(self, client):
+    async def test_cache_clear_requires_auth(self, client):
+        """DELETE /api/cache now requires authentication."""
         res = await client.delete("/api/cache")
-        assert res.status_code == 200
-        assert res.json()["status"] == "cleared"
+        assert res.status_code == 401
 
 
 class TestAnalyticsEndpoint:

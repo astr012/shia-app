@@ -108,11 +108,10 @@ function StatCard({
 }) {
   return (
     <motion.div
-      className="border border-white/15 bg-black/40 p-5 relative overflow-hidden group hover:border-matrix/40 transition-colors"
+      className="border border-white/15 duration-150 bg-black/40 p-5 relative overflow-hidden group hover:border-[#00ff41]/40 transition-colors"
       initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.3 }}
-      whileHover={{ borderColor: 'rgba(0,255,65,0.4)' }}
     >
       <div className="absolute top-3 right-3 opacity-10 group-hover:opacity-20 transition-opacity">
         <Icon size={40} />

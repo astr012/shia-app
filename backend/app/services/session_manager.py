@@ -24,7 +24,6 @@ class Session:
     websocket: WebSocket
     connected_at: float = field(default_factory=time.time)
     mode: str = "SIGN_TO_SPEECH"
-    bespoke_dictionary: Dict[str, List[str]] = field(default_factory=dict)
     gestures_sent: int = 0
     speeches_sent: int = 0
     manual_inputs: int = 0
@@ -143,12 +142,6 @@ class SessionManager:
         session = self.get_session(websocket)
         if session:
             session.mode = mode
-
-    def set_bespoke_dictionary(self, websocket: WebSocket, dictionary: Dict[str, List[str]]):
-        """Inject edge client bespoke dictionary safely."""
-        session = self.get_session(websocket)
-        if session:
-            session.bespoke_dictionary = dictionary
 
     @property
     def active_count(self) -> int:

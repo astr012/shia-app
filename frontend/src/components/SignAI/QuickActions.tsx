@@ -134,12 +134,8 @@ export default function QuickActions({
         return (
           <motion.div
             key={tile.label}
-            className="border border-white/20 p-3 hover:bg-white/5 cursor-crosshair transition-colors group relative overflow-hidden"
+            className="border border-white/20 duration-150 p-3 hover:bg-white/5 hover:border-[#00ff41]/50 cursor-crosshair transition-colors group relative overflow-hidden"
             variants={itemVariants}
-            whileHover={{
-              borderColor: 'rgba(0, 255, 65, 0.5)',
-              transition: { duration: 0.15 },
-            }}
           >
             {/* Pulse indicator for active tiles */}
             {isActive && tile.value !== '—' && (

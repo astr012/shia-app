@@ -1,15 +1,24 @@
-from sqlalchemy import Column, String, JSON, Integer
-from .database import Base
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, JSON
+from sqlalchemy.orm import relationship
+from app.db.database import Base
 
-class UserProfile(Base):
-    __tablename__ = "user_profiles"
-    
+class User(Base):
+    __tablename__ = "users"
+
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, unique=True, index=True, nullable=False)
+    username = Column(String, unique=True, index=True, nullable=False)
+    dialect = Column(String, default="ASL")  # e.g., ASL, BSL, ISL
+    preferences = Column(JSON, default={})  # Store UI preferences
+
+    custom_words = relationship("CustomDictionaryEntry", back_populates="user")
+
+
+class CustomDictionaryEntry(Base):
+    __tablename__ = "custom_dictionary"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    gesture_sequence = Column(String, index=True, nullable=False) # e.g., "THUMBS_UP POINT"
+    meaning = Column(String, nullable=False) # "Hello friend"
     
-    # E.g. "ASL", "BSL", "ISL"
-    regional_dialect = Column(String, default="ASL")
-    
-    # Custom mappings of English concepts to specific gesture arrays 
-    # e.g. {"grandma": ["TAPPING_CHIN", "FAMILY"], "boss": ["SALUTE"]}
-    bespoke_dictionary = Column(JSON, default=dict)
+    user = relationship("User", back_populates="custom_words")

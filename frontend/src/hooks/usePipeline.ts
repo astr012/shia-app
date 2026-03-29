@@ -57,9 +57,11 @@ interface PipelineActions {
 export function usePipeline(): PipelineState & PipelineActions {
   const [isActive, setIsActive] = useState(false);
   const [mode, setMode] = useState<TranslationMode>('SIGN_TO_SPEECH');
-  const [logs, setLogs] = useState<LogEntry[]>([
-    createLogEntry('SYSTEM', 'SYSTEM INITIALIZED. WAITING FOR INPUT...'),
-  ]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+
+  useEffect(() => {
+    setLogs([createLogEntry('SYSTEM', 'SYSTEM INITIALIZED. WAITING FOR INPUT...')]);
+  }, []);
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastGesture, setLastGesture] = useState<string | null>(null);
   const [lastSpokenText, setLastSpokenText] = useState<string | null>(null);
@@ -71,6 +73,10 @@ export function usePipeline(): PipelineState & PipelineActions {
   const lastGestureTime = useRef(0);
   const gestureBuffer = useRef<string[]>([]);
   const gestureFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const addLog = useCallback((source: LogEntry['source'], text: string) => {
+    setLogs((prev) => [...prev, createLogEntry(source, text)]);
+  }, []);
 
   // ── Wire up WebSocket ─────────────────────────────────────
   const handleWSMessage = useCallback(
@@ -131,11 +137,22 @@ export function usePipeline(): PipelineState & PipelineActions {
           break;
         }
 
+        case 'session_info': {
+          // Store or ignore session info as needed
+          addLog('SYSTEM', '[WS] Session established');
+          break;
+        }
+
+        case 'heartbeat': {
+          // Ignore heartbeat ping
+          break;
+        }
+
         default:
           console.log('[Pipeline] Unknown message type:', message.type);
       }
     },
-    [mode]
+    [mode, addLog]
   );
 
   const { status: wsStatus, send: wsSend, connect: wsConnect, disconnect: wsDisconnect } =
@@ -229,10 +246,6 @@ export function usePipeline(): PipelineState & PipelineActions {
   );
 
   // ── Pipeline Control ──────────────────────────────────────
-
-  const addLog = useCallback((source: LogEntry['source'], text: string) => {
-    setLogs((prev) => [...prev, createLogEntry(source, text)]);
-  }, []);
 
   const startPipeline = useCallback(() => {
     setIsActive(true);

@@ -19,8 +19,7 @@ export default function Footer({ serverVersion, isServerReachable }: FooterProps
     <footer className="max-w-7xl mx-auto mt-16 border-t border-white/10 pt-8 pb-6 flex flex-col md:flex-row justify-between items-center text-xs text-gray-600 gap-4">
       <div className="flex items-center gap-4">
         <motion.span
-          className="uppercase font-bold tracking-widest text-gray-400 border border-gray-800 px-2 py-1 font-mono flex items-center gap-2"
-          whileHover={{ borderColor: 'rgba(0,255,65,0.5)' }}
+          className="uppercase font-bold tracking-widest text-gray-400 border border-gray-800 px-2 py-1 font-mono flex items-center gap-2 hover:border-[#00ff41]/50 transition-colors duration-150"
         >
           {isServerReachable && (
             <span className="w-1.5 h-1.5 rounded-full bg-matrix inline-block" />

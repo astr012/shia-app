@@ -115,8 +115,7 @@ export default function TranscriptLog({ logs, isActive, onManualInput }: Transcr
           <motion.button
             onClick={handleSubmit}
             disabled={!isActive || !inputValue.trim()}
-            className="h-full px-4 border-l-2 border-white hover:bg-white hover:text-black font-pixel text-xl transition-colors disabled:opacity-50 cursor-pointer"
-            whileHover={isActive && inputValue.trim() ? { backgroundColor: '#fff', color: '#000' } : {}}
+            className="h-full px-4 border-l-2 border-white hover:bg-white hover:text-black font-pixel text-xl transition-colors disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-white cursor-pointer"
             whileTap={isActive && inputValue.trim() ? { scale: 0.95 } : {}}
           >
             EXEC

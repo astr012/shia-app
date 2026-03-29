@@ -111,12 +111,10 @@ export function useWebSocket({
         // Auto-reconnect logic (only if not intentionally closed)
         if (!intentionalClose.current && reconnect && reconnectCount.current < maxReconnectAttempts) {
           reconnectCount.current += 1;
-          // Exponential back-off: reconnectInterval * 2^(attempt - 1)
-          const backoffTime = reconnectInterval * Math.pow(2, reconnectCount.current - 1);
           console.log(
-            `[WS] Reconnecting... attempt ${reconnectCount.current}/${maxReconnectAttempts} in ${backoffTime}ms`
+            `[WS] Reconnecting... attempt ${reconnectCount.current}/${maxReconnectAttempts}`
           );
-          reconnectTimer.current = setTimeout(connect, backoffTime);
+          reconnectTimer.current = setTimeout(connect, reconnectInterval);
         }
       };
 

@@ -29,10 +29,12 @@ export default function VisionMatrix({ isActive, onGestureResult }: VisionMatrix
     startCamera,
     stopCamera,
     deviceTier,
+    isShedding,
   } = useMediaPipe({
     videoRef,
     canvasRef,
     enabled: isActive,
+    maxHands: 2,
     onResult: (result) => {
       onGestureResult?.(result);
     },
@@ -72,6 +74,7 @@ export default function VisionMatrix({ isActive, onGestureResult }: VisionMatrix
             transition={{ duration: 2, repeat: Infinity }}
           >
             FPS: {isActive ? (fps > 0 ? fps.toFixed(1) : '30.0') : '0.0'}
+            {isShedding && <span className="text-red-500 ml-2 animate-pulse">[MODELS SHED]</span>}
           </motion.span>
         </div>
       </div>

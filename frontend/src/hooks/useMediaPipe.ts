@@ -11,6 +11,65 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+// --- MediaPipe Global Singleton ---
+// Instantiating Hands multiple times (e.g., in React StrictMode) causes
+// Emscripten memory corruption and XHR fetch aborts. A singleton prevents this.
+let globalHandsInstance: any = null;
+let globalPoseInstance: any = null;
+let globalFaceMeshInstance: any = null;
+let globalCameraClass: any = null;
+let mediaPipeInitPromise: Promise<void> | null = null;
+let activeOnResultsCallback: ((results: any) => void) | null = null;
+let activeVisionState: any = { hands: [], pose: null, face: [] };
+
+async function initMediaPipe(deviceProfile: any) {
+  if (globalHandsInstance && globalPoseInstance && globalFaceMeshInstance && globalCameraClass) return;
+  if (!mediaPipeInitPromise) {
+    mediaPipeInitPromise = (async () => {
+      // @ts-ignore
+      const { Hands } = await import('@mediapipe/hands');
+      // @ts-ignore
+      const { Pose } = await import('@mediapipe/pose');
+      // @ts-ignore
+      const { FaceMesh } = await import('@mediapipe/face_mesh');
+      // @ts-ignore
+      const { Camera } = await import('@mediapipe/camera_utils');
+      
+      globalHandsInstance = new Hands({
+        locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
+      });
+      await globalHandsInstance.initialize();
+
+      globalPoseInstance = new Pose({
+        locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`,
+      });
+      await globalPoseInstance.initialize();
+
+      globalFaceMeshInstance = new FaceMesh({
+        locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`,
+      });
+      await globalFaceMeshInstance.initialize();
+
+      globalCameraClass = Camera;
+      
+      // Route results to whatever component is currently active
+      globalPoseInstance.onResults((results: any) => {
+        activeVisionState.pose = results.poseLandmarks || null;
+      });
+      globalFaceMeshInstance.onResults((results: any) => {
+        activeVisionState.face = results.multiFaceLandmarks || [];
+      });
+      globalHandsInstance.onResults((results: any) => {
+        activeVisionState.hands = results.multiHandLandmarks || [];
+        if (activeOnResultsCallback) {
+          activeOnResultsCallback(activeVisionState);
+        }
+      });
+    })();
+  }
+  await mediaPipeInitPromise;
+}
+
 export interface HandLandmark {
   x: number;
   y: number;
@@ -19,6 +78,8 @@ export interface HandLandmark {
 
 export interface HandTrackingResult {
   landmarks: HandLandmark[][];  // Array of hands, each with 21 landmarks
+  poseLandmarks?: (HandLandmark & { visibility?: number })[]; // Optional Pose 
+  faceLandmarks?: HandLandmark[][]; // Optional Face Mesh 
   gesture: string | null;
   confidence: number;
   timestamp: number;
@@ -28,7 +89,6 @@ interface UseMediaPipeOptions {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   enabled: boolean;
-  enableMultiModal?: boolean; // Phase 2: Pose + Face Mesh expansion
   onResult?: (result: HandTrackingResult) => void;
   onError?: (error: string) => void;
   maxHands?: number;
@@ -45,6 +105,7 @@ interface UseMediaPipeReturn {
   startCamera: () => Promise<void>;
   stopCamera: () => void;
   deviceTier: 'low' | 'mid' | 'high';
+  isShedding: boolean;
 }
 
 // ── Device Capability Detection ──────────────────────────────
@@ -227,7 +288,6 @@ export function useMediaPipe({
   videoRef,
   canvasRef,
   enabled,
-  enableMultiModal = false,
   onResult,
   onError,
   maxHands = 1,       // Default 1 hand for better performance
@@ -239,20 +299,21 @@ export function useMediaPipe({
   const [error, setError] = useState<string | null>(null);
   const [fps, setFps] = useState(0);
   const [lastResult, setLastResult] = useState<HandTrackingResult | null>(null);
-  
-  // Phase 2: Multi-Modal state
-  const [multiModalEmergencyShed, setMultiModalEmergencyShed] = useState(false);
-  const actualMultiModal = enableMultiModal && !multiModalEmergencyShed;
+  const [isShedding, setIsShedding] = useState(false);
 
-  // Detect device capability once; make it mutable for auto-downgrade self-healing
-  const [deviceProfile, setDeviceProfile] = useState(() => detectDeviceProfile());
+  // Detect device capability once
+  const [deviceProfile] = useState(() => detectDeviceProfile());
 
   const streamRef = useRef<MediaStream | null>(null);
   const animationRef = useRef<number | null>(null);
   const handsRef = useRef<unknown>(null);
-  const fpsCounter = useRef({ frames: 0, lastTime: performance.now(), lowFpsStreak: 0 });
+  const poseRef = useRef<unknown>(null);
+  const faceMeshRef = useRef<unknown>(null);
+  const cameraRef = useRef<unknown>(null);
+  const fpsCounter = useRef({ frames: 0, lastTime: performance.now(), lowFpsTicks: 0 });
   const frameCount = useRef(0);
   const stabilizerRef = useRef(new GestureStabilizer(deviceProfile.smoothingWindow));
+  const shedModelsRef = useRef(false);
 
   const startCamera = useCallback(async () => {
     if (!videoRef.current) {
@@ -262,6 +323,9 @@ export function useMediaPipe({
 
     setIsLoading(true);
     setError(null);
+    shedModelsRef.current = false;
+    setIsShedding(false);
+    fpsCounter.current = { frames: 0, lastTime: performance.now(), lowFpsTicks: 0 };
 
     try {
       // Adaptive camera resolution based on device capability
@@ -278,38 +342,13 @@ export function useMediaPipe({
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
 
-      // Dynamically import MediaPipe (tree-shaken, loaded on demand)
+      // Dynamically import MediaPipe using the singleton to avoid Emscripten crashes
       try {
-        // @ts-ignore - MediaPipe packages are optional runtime dependencies
-        const { Hands } = await import('@mediapipe/hands');
-        // @ts-ignore - MediaPipe packages are optional runtime dependencies
-        const { Camera } = await import('@mediapipe/camera_utils');
-        
-        let fmTracker: any = null;
-        let poseTracker: any = null;
-
-        if (actualMultiModal && deviceProfile.tier !== 'low') {
-          try {
-            // @ts-ignore
-            const fm = await import('@mediapipe/face_mesh');
-            // @ts-ignore
-            const pt = await import('@mediapipe/pose');
-            
-            fmTracker = fm.FaceMesh ? new fm.FaceMesh({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` }) : null;
-            poseTracker = pt.Pose ? new pt.Pose({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` }) : null;
-            
-            if (fmTracker) fmTracker.setOptions({ maxNumFaces: 1, minDetectionConfidence });
-            if (poseTracker) poseTracker.setOptions({ modelComplexity: deviceProfile.modelComplexity, minDetectionConfidence });
-            console.log('[Phase 2: Vision Expansion] Face Mesh & Pose models initialized.');
-          } catch(e) {
-            console.warn('[MediaPipe] Multi-modal extensions not available', e);
-          }
-        }
-
-        const hands = new Hands({
-          locateFile: (file: string) =>
-            `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
-        });
+        await initMediaPipe(deviceProfile);
+        const hands = globalHandsInstance;
+        const pose = globalPoseInstance;
+        const faceMesh = globalFaceMeshInstance;
+        const Camera = globalCameraClass;
 
         hands.setOptions({
           maxNumHands: maxHands,
@@ -317,43 +356,41 @@ export function useMediaPipe({
           minDetectionConfidence,
           minTrackingConfidence,
         });
+        pose.setOptions({
+          modelComplexity: deviceProfile.modelComplexity,
+          minDetectionConfidence,
+          minTrackingConfidence,
+        });
+        faceMesh.setOptions({
+          maxNumFaces: 1,
+          refineLandmarks: true,
+          minDetectionConfidence,
+          minTrackingConfidence,
+        });
 
-        hands.onResults((results: { multiHandLandmarks?: HandLandmark[][] }) => {
+        // Setup callback routing
+        activeOnResultsCallback = (visionState: any) => {
           // Frame skipping for low-end devices
           frameCount.current++;
           if (frameCount.current % deviceProfile.frameSkip !== 0) return;
 
-          // FPS calculation
+          // FPS calculation & Model Shedding
           fpsCounter.current.frames++;
           const now = performance.now();
           if (now - fpsCounter.current.lastTime >= 1000) {
             const currentFps = fpsCounter.current.frames * deviceProfile.frameSkip;
             setFps(currentFps);
-
-            // Phase 2: Predictive Thermal/Frame Monitoring (Self-Healing)
-            if (actualMultiModal && currentFps < 10) {
-              fpsCounter.current.lowFpsStreak++;
-              if (fpsCounter.current.lowFpsStreak >= 2) {
-                console.warn('[Self-Healing] Thermal/Frame distress detected. Shedding Face and Pose models, persisting purely on Hands tracking.');
-                setMultiModalEmergencyShed(true);
-                fpsCounter.current.lowFpsStreak = 0;
-              }
-            } else if (deviceProfile.tier !== 'low' && currentFps < 15) {
-              fpsCounter.current.lowFpsStreak++;
-              if (fpsCounter.current.lowFpsStreak >= 3) {
-                console.warn('[Self-Healing] Dropped frames detected, downgrading resolution/complexity.');
-                setDeviceProfile({
-                  tier: 'low',
-                  cameraWidth: 320,
-                  cameraHeight: 240,
-                  modelComplexity: 0,
-                  frameSkip: 3,
-                  smoothingWindow: 2,
-                });
-                fpsCounter.current.lowFpsStreak = 0;
+            
+            // Thermal/FPS Shedding: If FPS drops below 15 for 5 seconds, shed heavy models
+            if (currentFps < 15) {
+              fpsCounter.current.lowFpsTicks++;
+              if (fpsCounter.current.lowFpsTicks >= 5 && !shedModelsRef.current) {
+                console.warn('[MediaPipe] Thermal/FPS drop detected. Shedding Pose and Face Mesh models.');
+                shedModelsRef.current = true;
+                setIsShedding(true);
               }
             } else {
-              fpsCounter.current.lowFpsStreak = 0;
+              fpsCounter.current.lowFpsTicks = 0;
             }
 
             fpsCounter.current.frames = 0;
@@ -361,7 +398,7 @@ export function useMediaPipe({
           }
 
           // Process results
-          const landmarks = results.multiHandLandmarks || [];
+          const landmarks = visionState.hands;
           let gesture: string | null = null;
           let confidence = 0;
 
@@ -375,6 +412,8 @@ export function useMediaPipe({
 
           const trackingResult: HandTrackingResult = {
             landmarks,
+            poseLandmarks: visionState.pose,
+            faceLandmarks: visionState.face,
             gesture,
             confidence,
             timestamp: Date.now(),
@@ -384,34 +423,35 @@ export function useMediaPipe({
           onResult?.(trackingResult);
 
           // Draw landmarks on canvas
-          if (canvasRef.current && landmarks.length > 0) {
+          if (canvasRef.current) {
             const ctx = canvasRef.current.getContext('2d');
             if (ctx) {
               ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-              drawLandmarks(ctx, landmarks, canvasRef.current.width, canvasRef.current.height);
+              drawLandmarks(ctx, trackingResult, canvasRef.current.width, canvasRef.current.height);
             }
           }
-        });
+        };
 
         handsRef.current = hands;
+        poseRef.current = pose;
+        faceMeshRef.current = faceMesh;
 
         // Start camera feed into MediaPipe
         const camera = new Camera(videoRef.current, {
           onFrame: async () => {
             if (videoRef.current) {
-               if (handsRef.current) {
-                 await (handsRef.current as any).send({ image: videoRef.current });
-               }
-               if (actualMultiModal) {
-                 if (fmTracker) await fmTracker.send({ image: videoRef.current }).catch(() => {});
-                 if (poseTracker) await poseTracker.send({ image: videoRef.current }).catch(() => {});
-               }
+              const promises = [];
+              if (handsRef.current) promises.push((handsRef.current as any).send({ image: videoRef.current }));
+              if (poseRef.current && !shedModelsRef.current) promises.push((poseRef.current as any).send({ image: videoRef.current }));
+              if (faceMeshRef.current && !shedModelsRef.current) promises.push((faceMeshRef.current as any).send({ image: videoRef.current }));
+              await Promise.all(promises);
             }
           },
           width: deviceProfile.cameraWidth,
           height: deviceProfile.cameraHeight,
         });
 
+        cameraRef.current = camera;
         await camera.start();
         setIsTracking(true);
         console.log(`[MediaPipe] Started — Device: ${deviceProfile.tier}, Resolution: ${deviceProfile.cameraWidth}x${deviceProfile.cameraHeight}, Model: ${deviceProfile.modelComplexity === 0 ? 'lite' : 'full'}`);
@@ -469,6 +509,21 @@ export function useMediaPipe({
       animationRef.current = null;
     }
 
+    // Stop MediaPipe camera
+    if (cameraRef.current) {
+      (cameraRef.current as any).stop();
+      cameraRef.current = null;
+    }
+
+    // Note: We do NOT close the hands instance as it's a singleton.
+    // Calling .close() while it's loading causes Emscripten crash in StrictMode
+    if (handsRef.current) {
+      activeOnResultsCallback = null;
+      handsRef.current = null;
+      poseRef.current = null;
+      faceMeshRef.current = null;
+    }
+
     // Stop media stream
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -488,7 +543,7 @@ export function useMediaPipe({
     setLastResult(null);
   }, [videoRef]);
 
-  // Start/stop based on enabled prop or tier change
+  // Start/stop based on enabled prop
   useEffect(() => {
     if (enabled) {
       startCamera();
@@ -500,7 +555,7 @@ export function useMediaPipe({
       stopCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, deviceProfile.tier, actualMultiModal]);
+  }, [enabled]);
 
   return {
     isLoading,
@@ -511,16 +566,49 @@ export function useMediaPipe({
     startCamera,
     stopCamera,
     deviceTier: deviceProfile.tier,
+    isShedding,
   };
 }
 
 // ── Canvas Drawing Helpers ──────────────────────────────────
 function drawLandmarks(
   ctx: CanvasRenderingContext2D,
-  handsLandmarks: HandLandmark[][],
+  result: HandTrackingResult,
   width: number,
   height: number
 ) {
+  // Draw Face Mesh
+  if (result.faceLandmarks && result.faceLandmarks[0]) {
+    for (const point of result.faceLandmarks[0]) {
+      ctx.fillStyle = '#FF00FF';
+      ctx.beginPath();
+      ctx.arc(point.x * width, point.y * height, 1, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+
+  // Draw Pose
+  if (result.poseLandmarks) {
+    const poseConnections = [
+      [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], // Upper body
+      [11, 23], [12, 24], [23, 24] // Torso
+    ];
+    ctx.strokeStyle = '#00FFFF';
+    ctx.lineWidth = 2;
+    for (const [a, b] of poseConnections) {
+      const p1 = result.poseLandmarks[a];
+      const p2 = result.poseLandmarks[b];
+      if (p1 && p2 && (p1.visibility ?? 0) > 0.5 && (p2.visibility ?? 0) > 0.5) {
+        ctx.beginPath();
+        ctx.moveTo(p1.x * width, p1.y * height);
+        ctx.lineTo(p2.x * width, p2.y * height);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // Draw Hands
+  const handsLandmarks = result.landmarks || [];
   const connections = [
     [0, 1], [1, 2], [2, 3], [3, 4],       // Thumb
     [0, 5], [5, 6], [6, 7], [7, 8],       // Index
@@ -557,3 +645,4 @@ function drawLandmarks(
     }
   }
 }
+

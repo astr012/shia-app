@@ -2,46 +2,33 @@
 # SignAI_OS — FastAPI Backend
 # Main Application Entry Point
 #
-# Pipeline: WebSocket ←→ Grammar AI ←→ Translation Engine
+# This file is deliberately lean. All endpoint logic lives
+# in routers/, all services in services/, and all shared
+# instances in dependencies.py.
 #
-# Services:
-#   - GrammarEngine:      Sign → Speech (LLM + rule-based)
-#   - TranslationEngine:  Speech → Sign (LLM + vocabulary)
-#   - SessionManager:     Per-connection tracking
-#   - AnalyticsService:   System-wide metrics
-#   - ConnectionManager:  WebSocket lifecycle
-#   - TranslationCache:   LRU cache for repeated translations
-#   - RateLimiter:        Token bucket per-client throttling
+# Pipeline: WebSocket ←→ Grammar AI ←→ Translation Engine
 # ============================================================
 
-import time
-import json
-import asyncio
 import logging
-from datetime import datetime, timezone
 from contextlib import asynccontextmanager
-from typing import Optional, List
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.middleware import RequestLoggingMiddleware, SecurityHeadersMiddleware, RateLimitMiddleware, RequestIDMiddleware
-from app.services.grammar_engine import GrammarEngine
-from app.services.translation_engine import TranslationEngine
-from app.services.connection_manager import ConnectionManager
-from app.services.session_manager import SessionManager
-from app.services.analytics import AnalyticsService
-from app.services.cache import TranslationCache
-from app.services.rate_limiter import RateLimiter
-from app.services.tts_engine import TTSEngine
-
+from app.middleware import (
+    RequestLoggingMiddleware,
+    SecurityHeadersMiddleware,
+    RateLimitMiddleware,
+    RequestIDMiddleware,
+)
+from app.dependencies import analytics
 from app.db.database import init_db
-from app.routers import users
 
-# ── Logging ──────────────────────────────────────────────────
+# ── Routers ──────────────────────────────────────────────────
+from app.routers import health, auth, translation, tts, users, websocket
+
 logger = logging.getLogger("signai")
 
 
@@ -56,7 +43,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"   Grammar AI  : {'OpenAI (' + settings.OPENAI_MODEL + ')' if settings.OPENAI_API_KEY else 'Rule-based (fallback)'}")
     logger.info(f"   Frontend URL: {settings.FRONTEND_URL}")
     logger.info("━" * 60)
-    
+
     # Initialize Core Database Architecture (PostgreSQL/SQLite)
     try:
         await init_db()
@@ -95,9 +82,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(users.router)
 
-# ── Global Exception Handler ─────────────────────────────────
+# ── Route Registration ──────────────────────────────────────
+
+app.include_router(health.router)
+app.include_router(auth.router)
+app.include_router(translation.router)
+app.include_router(tts.router)
+app.include_router(users.router)
+app.include_router(websocket.router)
+
+
+# ── Global Exception Handlers ───────────────────────────────
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
@@ -130,512 +126,3 @@ async def http_exception_handler(request, exc):
             "request_id": req_id,
         },
     )
-
-
-# ── Services ─────────────────────────────────────────────────
-
-manager = ConnectionManager()
-session_mgr = SessionManager()
-grammar_engine = GrammarEngine()
-translation_engine = TranslationEngine()
-analytics = AnalyticsService()
-cache = TranslationCache(max_size=256, ttl_seconds=3600)
-ws_limiter = RateLimiter(
-    rate=settings.WS_MAX_MESSAGES_PER_SECOND,
-    capacity=settings.WS_MAX_MESSAGES_PER_SECOND * 2,
-)
-tts_engine = TTSEngine()
-
-HEARTBEAT_INTERVAL = 30  # seconds
-
-
-# ══════════════════════════════════════════════════════════════
-# REST ENDPOINTS
-# ══════════════════════════════════════════════════════════════
-
-
-# ── Health ───────────────────────────────────────────────────
-
-class HealthResponse(BaseModel):
-    status: str
-    version: str
-    timestamp: str
-    uptime: str
-    services: dict
-    config: dict
-
-@app.get("/health", response_model=HealthResponse, tags=["System"])
-async def health_check():
-    """System health check — returns server status, uptime, and service states."""
-    return HealthResponse(
-        status="online",
-        version=settings.APP_VERSION,
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        uptime=analytics.uptime_formatted,
-        services={
-            "grammar_engine": grammar_engine.get_status(),
-            "translation_engine": translation_engine.get_status(),
-            "active_connections": manager.active_count(),
-            "active_sessions": session_mgr.active_count,
-            "cache": cache.get_stats(),
-        },
-        config=settings.summary(),
-    )
-
-
-# ── Translate ────────────────────────────────────────────────
-
-class TranslateRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=500, description="Text to translate")
-    mode: str = Field(..., pattern="^(SIGN_TO_SPEECH|SPEECH_TO_SIGN)$", description="Translation direction")
-    language: Optional[str] = Field("en", description="Target language code")
-
-class TranslateResponse(BaseModel):
-    translated_text: str
-    original_text: str
-    mode: str
-    confidence: float
-    processing_time_ms: float
-
-@app.post("/api/translate", response_model=TranslateResponse, tags=["Translation"])
-async def translate_text(request: TranslateRequest):
-    """One-off text translation (non-realtime). For real-time, use the WebSocket endpoint."""
-    start = time.perf_counter()
-
-    try:
-        if request.mode == "SIGN_TO_SPEECH":
-            # Check cache first
-            cached = cache.get_grammar(request.text)
-            if cached:
-                corrected = cached
-            else:
-                corrected = await grammar_engine.process(request.text)
-                cache.set_grammar(request.text, corrected)
-
-            duration_ms = float((time.perf_counter() - start) * 1000)
-            analytics.record_latency("grammar", duration_ms)
-            analytics._total_translations += 1
-
-            return TranslateResponse(
-                translated_text=corrected,
-                original_text=request.text,
-                mode=request.mode,
-                confidence=0.92,
-                processing_time_ms=round(duration_ms, 1),
-            )
-        else:
-            # Check cache first
-            cached_signs = cache.get_sign(request.text)
-            if cached_signs:
-                sign_sequence = cached_signs
-            else:
-                sign_sequence = await translation_engine.speech_to_sign(request.text)
-                cache.set_sign(request.text, sign_sequence)
-
-            duration_ms = float((time.perf_counter() - start) * 1000)
-            analytics.record_latency("translation", duration_ms)
-            analytics._total_sign_conversions += 1
-
-            return TranslateResponse(
-                translated_text=" → ".join(sign_sequence),
-                original_text=request.text,
-                mode=request.mode,
-                confidence=0.89,
-                processing_time_ms=round(duration_ms, 1),
-            )
-    except Exception as e:
-        logger.error(f"Translation error: {e}")
-        analytics._total_errors += 1
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ── Analytics ────────────────────────────────────────────────
-
-@app.get("/api/analytics", tags=["Analytics"])
-async def get_analytics():
-    """Retrieve system-wide analytics: translations, latency, sessions, uptime."""
-    return {
-        **analytics.get_summary(),
-        "sessions": session_mgr.get_summary(),
-        "cache": cache.get_stats(),
-        "rate_limiter": ws_limiter.get_stats(),
-    }
-
-
-# ── Vocabulary ───────────────────────────────────────────────
-
-@app.get("/api/vocabulary", tags=["Translation"])
-async def get_vocabulary():
-    """
-    Returns the complete sign language vocabulary (English word → sign gesture mapping).
-    Useful for the frontend to display available gestures and build UI components.
-    """
-    from app.services.translation_engine import SIGN_VOCABULARY, SKIP_WORDS
-
-    return {
-        "vocabulary": SIGN_VOCABULARY,
-        "skip_words": list(SKIP_WORDS),
-        "total_signs": len(set(SIGN_VOCABULARY.values())),
-        "total_words": len(SIGN_VOCABULARY),
-    }
-
-
-# ── Grammar Rules ────────────────────────────────────────────
-
-@app.get("/api/grammar-rules", tags=["Translation"])
-async def get_grammar_rules():
-    """
-    Returns the rule-based grammar mappings used by the offline fallback engine.
-    """
-    from app.services.grammar_engine import GRAMMAR_RULES
-
-    return {
-        "rules": GRAMMAR_RULES,
-        "total_rules": len(GRAMMAR_RULES),
-        "engine_status": grammar_engine.get_status(),
-    }
-
-
-# ── Sessions ─────────────────────────────────────────────────
-
-@app.get("/api/sessions", tags=["System"])
-async def get_sessions():
-    """List all active WebSocket sessions with their stats."""
-    return session_mgr.get_summary()
-
-
-# ── Cache ────────────────────────────────────────────────────
-
-@app.get("/api/cache", tags=["System"])
-async def get_cache_stats():
-    """Translation cache statistics: entries, hit rate, size."""
-    return cache.get_stats()
-
-@app.delete("/api/cache", tags=["System"])
-async def clear_cache():
-    """Clear the translation cache."""
-    cache.clear()
-    return {"status": "cleared"}
-
-
-# ── Text-to-Speech ───────────────────────────────────────────
-
-import base64
-
-class TTSRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=1000, description="Text to synthesize")
-    voice: Optional[str] = Field(None, description="Voice name or alias")
-
-@app.post("/api/tts", tags=["TTS"])
-async def synthesize_speech(request: TTSRequest):
-    """
-    Server-side TTS — generates natural audio using Microsoft Neural Voices.
-    Returns base64-encoded MP3 audio that sounds identical on ALL devices.
-    Falls back to text-only response if edge-tts is not installed.
-    """
-    audio_bytes = await tts_engine.synthesize(request.text, request.voice)
-
-    if audio_bytes:
-        audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-        return {
-            "audio": audio_b64,
-            "format": "mp3",
-            "engine": "edge-tts",
-            "voice": request.voice or tts_engine.voice,
-            "text": request.text,
-        }
-    else:
-        # Fallback: tell frontend to use browser TTS
-        return {
-            "audio": None,
-            "format": "browser-tts",
-            "engine": "browser-fallback",
-            "text": request.text,
-        }
-
-@app.get("/api/tts/voices", tags=["TTS"])
-async def list_tts_voices():
-    """List all available neural voices for TTS."""
-    voices = await tts_engine.list_voices()
-    return {
-        "voices": voices,
-        "total": len(voices),
-        "engine": tts_engine.get_status(),
-    }
-
-
-# ══════════════════════════════════════════════════════════════
-# WEBSOCKET ENDPOINT (Real-time Pipeline)
-# ══════════════════════════════════════════════════════════════
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """
-    Main real-time pipeline endpoint.
-
-    Incoming message types:
-      - gesture_sequence: Array of detected gestures → grammar AI → speech text
-      - speech_input: Spoken text → sign language sequence
-      - manual_text: Manual text input → process based on mode
-      - set_mode: Switch translation mode for this session
-      - ping: Keepalive ping
-
-    Outgoing message types:
-      - translation_result: Final translated text
-      - sign_animation: Sign language animation sequence
-      - grammar_processed: Grammar correction details
-      - session_info: Session ID and metadata
-      - webrtc_offer: WebRTC P2P offer
-      - webrtc_answer: WebRTC P2P answer
-      - webrtc_ice: WebRTC ICE candidate
-      - pong: Keepalive response
-      - error: Error details
-    """
-    await manager.connect(websocket)
-    session = session_mgr.create_session(websocket)
-    analytics.register_session(session.session_id)
-
-    logger.info(f"Client connected [session={session.session_id}] | Active: {manager.active_count()}")
-
-    # Send session info to the client
-    await send_ws(websocket, "session_info", {
-        "session_id": session.session_id,
-        "mode": session.mode,
-        "server_version": settings.APP_VERSION,
-    })
-
-    # Start server-side heartbeat task
-    heartbeat_task = asyncio.create_task(
-        _heartbeat_loop(websocket, session.session_id)
-    )
-
-    try:
-        while True:
-            raw = await websocket.receive_text()
-
-            # Rate limiting check
-            if not ws_limiter.check(session.session_id):
-                await send_ws(websocket, "error", {
-                    "message": "Rate limit exceeded. Slow down.",
-                    "code": "RATE_LIMITED",
-                })
-                continue
-
-            try:
-                message = json.loads(raw)
-                msg_type = message.get("type")
-                payload = message.get("payload", {})
-
-                logger.info(f"[WS:{session.session_id}] ← {msg_type}")
-
-                if msg_type == "gesture_sequence":
-                    session_mgr.record_gesture(websocket)
-                    analytics.record_request(session.session_id, "gesture_sequence")
-                    await handle_gesture_sequence(websocket, payload, session.session_id)
-
-                elif msg_type == "speech_input":
-                    session_mgr.record_speech(websocket)
-                    analytics.record_request(session.session_id, "speech_input")
-                    await handle_speech_input(websocket, payload, session.session_id)
-
-                elif msg_type == "manual_text":
-                    session_mgr.record_manual(websocket)
-                    analytics.record_request(session.session_id, "manual_text")
-                    await handle_manual_text(websocket, payload, session.session_id)
-
-                elif msg_type == "set_mode":
-                    new_mode = payload.get("mode", "SIGN_TO_SPEECH")
-                    session_mgr.set_mode(websocket, new_mode)
-                    await send_ws(websocket, "mode_changed", {"mode": new_mode})
-                    logger.info(f"[WS:{session.session_id}] Mode → {new_mode}")
-
-                elif msg_type == "ping":
-                    await send_ws(websocket, "pong", {
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "session_id": session.session_id,
-                    })
-                
-                elif msg_type in ["webrtc_offer", "webrtc_answer", "webrtc_ice"]:
-                    target_session_id = payload.get("target_session_id")
-                    if target_session_id:
-                        target_session = session_mgr.get_session_by_id(target_session_id)
-                        if target_session:
-                            logger.info(f"[WS:{session.session_id}] Routed WebRTC {msg_type} to {target_session_id}")
-                            await manager.send_to(target_session.websocket, {
-                                "type": msg_type,
-                                "payload": {
-                                    "from_session": session.session_id,
-                                    "data": payload.get("data")
-                                }
-                            })
-                        else:
-                            await send_ws(websocket, "error", {"message": "Target session not found"})
-
-                else:
-                    await send_ws(websocket, "error", {"message": f"Unknown type: {msg_type}"})
-
-
-            except json.JSONDecodeError:
-                await send_ws(websocket, "error", {"message": "Invalid JSON"})
-                session_mgr.record_error(websocket)
-                analytics.record_error(session.session_id)
-
-    except WebSocketDisconnect:
-        pass
-    finally:
-        heartbeat_task.cancel()
-        session_mgr.remove_session(websocket)
-        analytics.unregister_session(session.session_id)
-        manager.disconnect(websocket)
-        logger.info(f"Client disconnected [session={session.session_id}] | Active: {manager.active_count()}")
-
-
-# ══════════════════════════════════════════════════════════════
-# PIPELINE HANDLERS
-# ══════════════════════════════════════════════════════════════
-
-async def handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str):
-    """
-    SIGN → SPEECH Pipeline:
-    Gesture labels → Grammar Engine (LLM) → Natural text → Send for TTS
-    """
-    gestures = payload.get("gestures", [])
-    if not gestures:
-        await send_ws(ws, "error", {"message": "No gestures provided"})
-        return
-
-    start = time.perf_counter()
-
-    # Step 1: Join raw gestures
-    raw_text = " ".join(g.replace("_", " ").lower() for g in gestures)
-    logger.info(f"[Pipeline:{session_id}] Raw gesture text: {raw_text}")
-
-    # Step 2: Check cache first, then grammar engine
-    cached = cache.get_grammar(raw_text)
-    if cached:
-        corrected_text = cached
-        duration_ms = float((time.perf_counter() - start) * 1000)
-        logger.info(f"[Pipeline:{session_id}] Cache HIT: {corrected_text} ({duration_ms:.1f}ms)")
-    else:
-        corrected_text = await grammar_engine.process(raw_text)
-        cache.set_grammar(raw_text, corrected_text)
-        duration_ms = float((time.perf_counter() - start) * 1000)
-        logger.info(f"[Pipeline:{session_id}] Corrected text: {corrected_text} ({duration_ms:.1f}ms)")
-
-    analytics.record_latency("grammar", duration_ms)
-
-    # Send grammar processing result
-    await send_ws(ws, "grammar_processed", {
-        "original": raw_text,
-        "corrected": corrected_text,
-        "latency_ms": round(duration_ms, 1),
-        "cached": cached is not None,
-    })
-
-    # Step 3: Generate TTS audio server-side (natural voice for ALL devices)
-    audio_b64 = None
-    if tts_engine.is_available:
-        audio_bytes = await tts_engine.synthesize(corrected_text)
-        if audio_bytes:
-            import base64
-            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-
-    # Step 4: Send final translation + audio
-    await send_ws(ws, "translation_result", {
-        "translated_text": corrected_text,
-        "source_gesture": " → ".join(gestures),
-        "processing_time_ms": round(duration_ms, 1),
-        "audio": audio_b64,
-        "audio_format": "mp3" if audio_b64 else None,
-    })
-
-
-async def handle_speech_input(ws: WebSocket, payload: dict, session_id: str):
-    """
-    SPEECH → SIGN Pipeline:
-    Spoken text → Translation Engine → Sign language sequence
-    """
-    text = payload.get("text", "")
-    if not text:
-        await send_ws(ws, "error", {"message": "No text provided"})
-        return
-
-    start = time.perf_counter()
-    logger.info(f"[Pipeline:{session_id}] Speech input: {text}")
-
-    # Check cache first, then translation engine
-    cached = cache.get_sign(text)
-    if cached:
-        sign_sequence = cached
-        duration_ms = float((time.perf_counter() - start) * 1000)
-        logger.info(f"[Pipeline:{session_id}] Cache HIT: {sign_sequence} ({duration_ms:.1f}ms)")
-    else:
-        sign_sequence = await translation_engine.speech_to_sign(text)
-        cache.set_sign(text, sign_sequence)
-        duration_ms = float((time.perf_counter() - start) * 1000)
-        logger.info(f"[Pipeline:{session_id}] Sign sequence: {sign_sequence} ({duration_ms:.1f}ms)")
-
-    analytics.record_latency("translation", duration_ms)
-
-    await send_ws(ws, "sign_animation", {
-        "sign_sequence": sign_sequence,
-        "source_text": text,
-        "processing_time_ms": round(duration_ms, 1),
-    })
-
-
-async def handle_manual_text(ws: WebSocket, payload: dict, session_id: str):
-    """Handle manual text input — route based on mode."""
-    text = payload.get("text", "")
-    mode = payload.get("mode", "SIGN_TO_SPEECH")
-
-    start = time.perf_counter()
-
-    if mode == "SIGN_TO_SPEECH":
-        corrected = await grammar_engine.process(text)
-        duration_ms = float((time.perf_counter() - start) * 1000)
-        analytics.record_latency("grammar", duration_ms)
-        await send_ws(ws, "translation_result", {
-            "translated_text": corrected,
-            "source_gesture": "MANUAL",
-            "processing_time_ms": round(duration_ms, 1),
-        })
-    else:
-        sign_sequence = await translation_engine.speech_to_sign(text)
-        duration_ms = float((time.perf_counter() - start) * 1000)
-        analytics.record_latency("translation", duration_ms)
-        await send_ws(ws, "sign_animation", {
-            "sign_sequence": sign_sequence,
-            "source_text": text,
-            "processing_time_ms": round(duration_ms, 1),
-        })
-
-
-# ══════════════════════════════════════════════════════════════
-# HELPERS
-# ══════════════════════════════════════════════════════════════
-
-async def send_ws(ws: WebSocket, msg_type: str, payload: dict):
-    """Send a structured WebSocket message."""
-    await ws.send_json({
-        "type": msg_type,
-        "payload": payload,
-        "timestamp": datetime.now(timezone.utc).timestamp(),
-    })
-
-
-async def _heartbeat_loop(ws: WebSocket, session_id: str):
-    """
-    Server-side heartbeat: sends a ping every HEARTBEAT_INTERVAL seconds.
-    If the client is dead, the send will raise an exception and the
-    WebSocket handler's finally block will clean up.
-    """
-    try:
-        while True:
-            await asyncio.sleep(HEARTBEAT_INTERVAL)
-            await send_ws(ws, "heartbeat", {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "session_id": session_id,
-            })
-    except Exception:
-        pass  # Connection closed — cleanup happens in the main handler

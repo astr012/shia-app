@@ -34,6 +34,7 @@ interface UseWebSocketReturn {
   connect: () => void;
   disconnect: () => void;
   lastMessage: WSMessage | null;
+  sessionId: string | null;
 }
 
 export function useWebSocket({
@@ -47,6 +48,7 @@ export function useWebSocket({
 }: UseWebSocketOptions): UseWebSocketReturn {
   const [status, setStatus] = useState<WSStatus>('disconnected');
   const [lastMessage, setLastMessage] = useState<WSMessage | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectCount = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -93,6 +95,12 @@ export function useWebSocket({
         try {
           const message: WSMessage = JSON.parse(event.data);
           setLastMessage(message);
+          
+          if (message.type === 'session_info') {
+            const sid = (message.payload as any)?.session_id;
+            if (sid) setSessionId(sid);
+          }
+
           onMessageRef.current?.(message);
         } catch {
           console.warn('[WS] Failed to parse message:', event.data);
@@ -111,10 +119,11 @@ export function useWebSocket({
         // Auto-reconnect logic (only if not intentionally closed)
         if (!intentionalClose.current && reconnect && reconnectCount.current < maxReconnectAttempts) {
           reconnectCount.current += 1;
+          const delay = Math.min(reconnectInterval * Math.pow(1.5, reconnectCount.current - 1), 30000);
           console.log(
-            `[WS] Reconnecting... attempt ${reconnectCount.current}/${maxReconnectAttempts}`
+            `[WS] Reconnecting... attempt ${reconnectCount.current}/${maxReconnectAttempts} in ${delay}ms`
           );
-          reconnectTimer.current = setTimeout(connect, reconnectInterval);
+          reconnectTimer.current = setTimeout(connect, delay);
         }
       };
 
@@ -166,5 +175,5 @@ export function useWebSocket({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoConnect]);
 
-  return { status, send, connect, disconnect, lastMessage };
+  return { status, send, connect, disconnect, lastMessage, sessionId };
 }

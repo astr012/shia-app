@@ -174,14 +174,14 @@ async def _handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str
     logger.info(f"[Pipeline:{session_id}] Raw gesture text: {raw_text}")
 
     # Step 2: Check cache first, then grammar engine
-    cached = cache.get_grammar(raw_text)
+    cached = await cache.get_grammar(raw_text)
     if cached:
         corrected_text = cached
         duration_ms = float((time.perf_counter() - start) * 1000)
         logger.info(f"[Pipeline:{session_id}] Cache HIT: {corrected_text} ({duration_ms:.1f}ms)")
     else:
         corrected_text = await grammar_engine.process(raw_text)
-        cache.set_grammar(raw_text, corrected_text)
+        await cache.set_grammar(raw_text, corrected_text)
         duration_ms = float((time.perf_counter() - start) * 1000)
         logger.info(f"[Pipeline:{session_id}] Corrected text: {corrected_text} ({duration_ms:.1f}ms)")
 
@@ -225,14 +225,14 @@ async def _handle_speech_input(ws: WebSocket, payload: dict, session_id: str):
     start = time.perf_counter()
     logger.info(f"[Pipeline:{session_id}] Speech input: {text}")
 
-    cached = cache.get_sign(text)
+    cached = await cache.get_sign(text)
     if cached:
         sign_sequence = cached
         duration_ms = float((time.perf_counter() - start) * 1000)
         logger.info(f"[Pipeline:{session_id}] Cache HIT: {sign_sequence} ({duration_ms:.1f}ms)")
     else:
         sign_sequence = await translation_engine.speech_to_sign(text)
-        cache.set_sign(text, sign_sequence)
+        await cache.set_sign(text, sign_sequence)
         duration_ms = float((time.perf_counter() - start) * 1000)
         logger.info(f"[Pipeline:{session_id}] Sign sequence: {sign_sequence} ({duration_ms:.1f}ms)")
 
@@ -254,12 +254,12 @@ async def _handle_manual_text(ws: WebSocket, payload: dict, session_id: str):
 
     if mode == "SIGN_TO_SPEECH":
         # Check cache first
-        cached = cache.get_grammar(text)
+        cached = await cache.get_grammar(text)
         if cached:
             corrected = cached
         else:
             corrected = await grammar_engine.process(text)
-            cache.set_grammar(text, corrected)
+            await cache.set_grammar(text, corrected)
 
         duration_ms = float((time.perf_counter() - start) * 1000)
         analytics.record_latency("grammar", duration_ms)
@@ -270,12 +270,12 @@ async def _handle_manual_text(ws: WebSocket, payload: dict, session_id: str):
         })
     else:
         # Check cache first
-        cached_signs = cache.get_sign(text)
+        cached_signs = await cache.get_sign(text)
         if cached_signs:
             sign_sequence = cached_signs
         else:
             sign_sequence = await translation_engine.speech_to_sign(text)
-            cache.set_sign(text, sign_sequence)
+            await cache.set_sign(text, sign_sequence)
 
         duration_ms = float((time.perf_counter() - start) * 1000)
         analytics.record_latency("translation", duration_ms)

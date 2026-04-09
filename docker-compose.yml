@@ -10,6 +10,18 @@
 # ============================================================
 
 services:
+  redis:
+    image: "redis:alpine"
+    container_name: shia-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   backend:
     build:
       context: ./backend
@@ -24,6 +36,10 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - FRONTEND_URL=http://localhost:3000
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -46,3 +62,4 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+

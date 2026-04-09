@@ -43,12 +43,12 @@ async def translate_text(request: TranslateRequest):
 
     try:
         if request.mode == "SIGN_TO_SPEECH":
-            cached = cache.get_grammar(request.text)
+            cached = await cache.get_grammar(request.text)
             if cached:
                 corrected = cached
             else:
                 corrected = await grammar_engine.process(request.text)
-                cache.set_grammar(request.text, corrected)
+                await cache.set_grammar(request.text, corrected)
 
             duration_ms = float((time.perf_counter() - start) * 1000)
             analytics.record_latency("grammar", duration_ms)
@@ -61,12 +61,12 @@ async def translate_text(request: TranslateRequest):
                 processing_time_ms=round(duration_ms, 1),
             )
         else:
-            cached_signs = cache.get_sign(request.text)
+            cached_signs = await cache.get_sign(request.text)
             if cached_signs:
                 sign_sequence = cached_signs
             else:
                 sign_sequence = await translation_engine.speech_to_sign(request.text)
-                cache.set_sign(request.text, sign_sequence)
+                await cache.set_sign(request.text, sign_sequence)
 
             duration_ms = float((time.perf_counter() - start) * 1000)
             analytics.record_latency("translation", duration_ms)

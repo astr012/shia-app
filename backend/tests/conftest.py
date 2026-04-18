@@ -11,7 +11,9 @@ def anyio_backend():
     return "asyncio"
 
 
-@pytest.fixture(autouse=True, scope="session")
-async def setup_db():
-    """Create all database tables before any tests run."""
-    await init_db()
+@pytest.fixture(autouse=True, scope="function")
+async def clear_db():
+    from app.db.database import engine, Base
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)

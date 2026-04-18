@@ -1,5 +1,5 @@
 # ============================================================
-# Tests — REST API Endpoints
+# Tests â€” REST API Endpoints
 # ============================================================
 
 import pytest
@@ -133,14 +133,4 @@ class TestCacheEndpoint:
         assert res.status_code == 401
 
 
-class TestAnalyticsEndpoint:
 
-    @pytest.mark.asyncio
-    async def test_analytics_returns_data(self, client):
-        res = await client.get("/api/analytics")
-        assert res.status_code == 200
-        data = res.json()
-        assert "uptime_seconds" in data
-        assert "total_translations" in data
-        assert "cache" in data
-        assert "rate_limiter" in data

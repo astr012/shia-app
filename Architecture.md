@@ -192,4 +192,11 @@ docker compose up --build
 | Payload Verification | Pydantic strict casting | Subsystem models |
 | Leakage Prevention | Client-side memory CV processing | Browser WebAssembly |
 | Dependency Isolation | Deterministic engine fallbacks | `grammar_engine.py` |
-| Quality Control | 75 deterministic passing tests | `pytest` suite |
+| Authorization | Role-based access control (user/admin) | `auth.py` â†’ `require_role()` |
+| CORS Hardening | Restricted methods + explicit header allowlist | `main.py` â†’ `CORSMiddleware` |
+| CSRF Protection | Origin/Referer validation on state-changing requests | `middleware.py` â†’ `CSRFMiddleware` |
+| XSS Prevention | Input sanitization + Content-Security-Policy | `translation.py` + `SecurityHeadersMiddleware` |
+| SQL Injection Prevention | SQLAlchemy ORM parameterized queries (zero raw SQL) | `crud.py`, `database.py` |
+| Password Policy | bcrypt hashing + configurable strength validation | `auth.py` â†’ `validate_password_strength()` |
+| Transport Security | HSTS + Permissions-Policy headers (production) | `SecurityHeadersMiddleware` |
+| Quality Control | 86 deterministic passing tests | `pytest` suite |

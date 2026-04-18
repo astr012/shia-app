@@ -1,25 +1,27 @@
 # ============================================================
-# SignAI_OS — Middleware
+# SignAI_OS â€” Middleware
 #
 # Request ID tracking, logging, performance tracking,
-# security headers, and REST API rate limiting.
+# security headers, CSRF protection, and REST API rate limiting.
 # ============================================================
 
 import time
 import uuid
 import logging
 from typing import Callable
+from urllib.parse import urlparse
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
 
 from app.services.rate_limiter import RateLimiter
+from app.config import settings
 
 logger = logging.getLogger("signai.middleware")
 
 
-# ── Rate limiting for REST endpoints ─────────────────────────
+# â”€â”€ Rate limiting for REST endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 # Shared REST rate limiter: 30 req/s per IP, burst of 60
 _rest_limiter = RateLimiter(rate=30, capacity=60)
@@ -28,6 +30,9 @@ _rest_limiter = RateLimiter(rate=30, capacity=60)
 _EXEMPT_PATHS = frozenset({
     "/health", "/docs", "/redoc", "/openapi.json", "/favicon.ico",
 })
+
+# HTTP methods that mutate state (subject to CSRF checks)
+_STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -50,6 +55,64 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             return response
         finally:
             correlation_id.reset(token)
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    """
+    Cross-Site Request Forgery protection.
+
+    Validates Origin and Referer headers on state-changing requests
+    (POST, PUT, DELETE, PATCH) against the configured trusted origins.
+    API endpoints using Bearer token auth are exempt (token itself is CSRF-proof).
+    WebSocket upgrade requests are also exempt.
+    """
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Skip non-state-changing methods
+        if request.method not in _STATE_CHANGING_METHODS:
+            return await call_next(request)
+
+        # Skip WebSocket upgrades
+        if request.headers.get("upgrade") == "websocket":
+            return await call_next(request)
+
+        # Bearer token auth is inherently CSRF-safe (not sent by browser automatically)
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            return await call_next(request)
+
+        # Validate Origin or Referer
+        origin = request.headers.get("origin")
+        referer = request.headers.get("referer")
+
+        trusted = settings.CSRF_TRUSTED_ORIGINS
+
+        if origin:
+            if origin not in trusted:
+                req_id = getattr(request.state, "request_id", "?")
+                logger.warning(f"[{req_id}] CSRF rejected: origin={origin}")
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "csrf_validation_failed",
+                        "message": "Cross-origin request blocked.",
+                    },
+                )
+        elif referer:
+            parsed = urlparse(referer)
+            referer_origin = f"{parsed.scheme}://{parsed.netloc}"
+            if referer_origin not in trusted:
+                req_id = getattr(request.state, "request_id", "?")
+                logger.warning(f"[{req_id}] CSRF rejected: referer={referer_origin}")
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "csrf_validation_failed",
+                        "message": "Cross-origin request blocked.",
+                    },
+                )
+
+        return await call_next(request)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -104,11 +167,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         duration_ms = (time.perf_counter() - start_time) * 1000
-        req_id = getattr(request.state, "request_id", "—")
+        req_id = getattr(request.state, "request_id", "â€”")
 
         if not skip_log:
             logger.info(
-                f"[{req_id}] {request.method} {request.url.path} → {response.status_code} "
+                f"[{req_id}] {request.method} {request.url.path} â†’ {response.status_code} "
                 f"({duration_ms:.1f}ms)"
             )
 
@@ -119,18 +182,32 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """
-    Adds essential security headers to all HTTP responses.
+    Adds comprehensive security headers to all HTTP responses.
+    Includes CSP, HSTS, Permissions-Policy, and standard XSS mitigations.
     """
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         response = await call_next(request)
 
+        # Standard XSS and clickjacking mitigations
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        # Content Security Policy (config-driven)
+        response.headers["Content-Security-Policy"] = settings.CSP_DIRECTIVES
+
+        # HTTP Strict Transport Security (for production TLS enforcement)
+        if settings.ENV == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # Permissions Policy â€” restrict sensitive browser APIs
+        response.headers["Permissions-Policy"] = (
+            "camera=(self), microphone=(self), geolocation=(), payment=()"
+        )
+
+        # Remove server identity leakage
         response.headers["X-Powered-By"] = "SignAI_OS"
 
         return response
-
-

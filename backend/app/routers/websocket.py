@@ -20,6 +20,7 @@ from app.config import settings
 from app.dependencies import (
     manager, session_mgr, grammar_engine, translation_engine,
     analytics, cache, ws_limiter, tts_engine, HEARTBEAT_INTERVAL,
+    classifier
 )
 
 logger = logging.getLogger("signai")
@@ -160,20 +161,37 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
 async def _handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str):
     """
     SIGN → SPEECH Pipeline:
-    Gesture labels → Grammar Engine (LLM) → Natural text → Send for TTS
+    Landmark seq / Gesture labels → ML Classify → Grammar Engine (LLM) → Natural text → Send for TTS
     """
+    # Try getting pre-classified labels first
     gestures = payload.get("gestures", [])
+    
+    # Check for raw ML landmarks
+    landmarks = payload.get("landmarks", [])
+    ml_confidence_metrics = []
+
+    if landmarks:
+        raw_gestures = []
+        for index, frame in enumerate(landmarks):
+            label, confidence = classifier.classify(frame)
+            if label:
+                raw_gestures.append(label)
+                ml_confidence_metrics.append({"frame": index, "label": label, "confidence": round(confidence, 3)})
+        
+        # Merge consecutive identical ML gesture predictions
+        gestures = [raw_gestures[i] for i in range(len(raw_gestures)) if i == 0 or raw_gestures[i] != raw_gestures[i-1]]
+
     if not gestures:
-        await _send_ws(ws, "error", {"message": "No gestures provided"})
+        await _send_ws(ws, "error", {"message": "No valid gestures or landmarks provided"})
         return
 
     start = time.perf_counter()
 
-    # Step 1: Join raw gestures
+    # Step 1: Join raw gestures (fallback tertiary layer)
     raw_text = " ".join(g.replace("_", " ").lower() for g in gestures)
     logger.info(f"[Pipeline:{session_id}] Raw gesture text: {raw_text}")
 
-    # Step 2: Check cache first, then grammar engine
+    # Step 2: Check cache first, then grammar engine (primary/secondary layer)
     cached = await cache.get_grammar(raw_text)
     if cached:
         corrected_text = cached
@@ -209,6 +227,7 @@ async def _handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str
         "processing_time_ms": round(duration_ms, 1),
         "audio": audio_b64,
         "audio_format": "mp3" if audio_b64 else None,
+        "ml_metrics": ml_confidence_metrics,
     })
 
 

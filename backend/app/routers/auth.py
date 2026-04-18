@@ -1,5 +1,5 @@
 # ============================================================
-# SignAI_OS — Authentication Router
+# SignAI_OS â€” Authentication Router
 #
 # Register, Login, and Current User data.
 # ============================================================
@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from app.db.database import get_db
 from app.db import crud, models
-from app.services.auth import verify_password, get_password_hash, create_access_token
+from app.services.auth import verify_password, get_password_hash, create_access_token, validate_password_strength
 from app.config import settings
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -47,6 +47,14 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 
 @router.post("/register", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
 async def register(user: UserRegister, db: AsyncSession = Depends(get_db)):
+    # Enforce password policy
+    violations = validate_password_strength(user.password)
+    if violations:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": "Password does not meet requirements.", "violations": violations},
+        )
+
     db_user = await crud.get_user_by_username(db, username=user.username)
     if db_user:
         raise HTTPException(

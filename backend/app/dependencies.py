@@ -15,6 +15,7 @@ from app.services.analytics import AnalyticsService
 from app.services.cache import TranslationCache
 from app.services.rate_limiter import RateLimiter
 from app.services.tts_engine import TTSEngine
+from app.services.ml_classifier import GestureClassifier
 
 # ── Service Singletons ──────────────────────────────────────
 
@@ -29,5 +30,6 @@ ws_limiter = RateLimiter(
     capacity=settings.WS_MAX_MESSAGES_PER_SECOND * 2,
 )
 tts_engine = TTSEngine()
+classifier = GestureClassifier(confidence_threshold=0.7)
 
 HEARTBEAT_INTERVAL = 30  # seconds

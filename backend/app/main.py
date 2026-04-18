@@ -1,12 +1,12 @@
 # ============================================================
-# SignAI_OS — FastAPI Backend
+# SignAI_OS â€” FastAPI Backend
 # Main Application Entry Point
 #
 # This file is deliberately lean. All endpoint logic lives
 # in routers/, all services in services/, and all shared
 # instances in dependencies.py.
 #
-# Pipeline: WebSocket ←→ Grammar AI ←→ Translation Engine
+# Pipeline: WebSocket â†â†’ Grammar AI â†â†’ Translation Engine
 # ============================================================
 
 import logging
@@ -22,27 +22,28 @@ from app.middleware import (
     SecurityHeadersMiddleware,
     RateLimitMiddleware,
     RequestIDMiddleware,
+    CSRFMiddleware,
 )
 from app.dependencies import analytics
 from app.db.database import init_db
 
-# ── Routers ──────────────────────────────────────────────────
-from app.routers import health, auth, translation, tts, users, websocket
+# â”€â”€ Routers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+from app.routers import health, auth, translation, tts, users, websocket, ml
 
 logger = logging.getLogger("signai")
 
 
-# ── Lifespan ─────────────────────────────────────────────────
+# â”€â”€ Lifespan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle."""
-    logger.info("━" * 60)
-    logger.info(f"🟢 {settings.APP_NAME} v{settings.APP_VERSION} starting")
+    logger.info("â”" * 60)
+    logger.info(f"ðŸŸ¢ {settings.APP_NAME} v{settings.APP_VERSION} starting")
     logger.info(f"   Environment : {settings.ENV}")
     logger.info(f"   Grammar AI  : {'OpenAI (' + settings.OPENAI_MODEL + ')' if settings.OPENAI_API_KEY else 'Rule-based (fallback)'}")
     logger.info(f"   Frontend URL: {settings.FRONTEND_URL}")
-    logger.info("━" * 60)
+    logger.info("â”" * 60)
 
     # Initialize Core Database Architecture (PostgreSQL/SQLite)
     try:
@@ -52,15 +53,15 @@ async def lifespan(app: FastAPI):
         logger.error(f"   Database   : Failed to initialize - {e}")
 
     yield
-    logger.info(f"🔴 {settings.APP_NAME} shutting down | Uptime: {analytics.uptime_formatted}")
-    logger.info("━" * 60)
+    logger.info(f"ðŸ”´ {settings.APP_NAME} shutting down | Uptime: {analytics.uptime_formatted}")
+    logger.info("â”" * 60)
 
 
-# ── App ──────────────────────────────────────────────────────
+# â”€â”€ App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 app = FastAPI(
     title=f"{settings.APP_NAME} API",
-    description="AI-powered sign language ↔ speech communication backend",
+    description="AI-powered sign language â†” speech communication backend",
     version=settings.APP_VERSION,
     lifespan=lifespan,
     docs_url="/docs",
@@ -68,22 +69,24 @@ app = FastAPI(
 )
 
 
-# ── Middleware ───────────────────────────────────────────────
+# â”€â”€ Middleware â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(CSRFMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=settings.ALLOWED_METHODS,
+    allow_headers=settings.ALLOWED_HEADERS,
+    expose_headers=["X-Request-ID", "X-Response-Time"],
 )
 
 
-# ── Route Registration ──────────────────────────────────────
+# â”€â”€ Route Registration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 app.include_router(health.router)
 app.include_router(auth.router)
@@ -91,9 +94,10 @@ app.include_router(translation.router)
 app.include_router(tts.router)
 app.include_router(users.router)
 app.include_router(websocket.router)
+app.include_router(ml.router)
 
 
-# ── Global Exception Handlers ───────────────────────────────
+# â”€â”€ Global Exception Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):

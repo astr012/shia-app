@@ -1,5 +1,5 @@
 # ============================================================
-# SignAI_OS — Health & System Router
+# SignAI_OS â€” Health & System Router
 # ============================================================
 
 from datetime import datetime, timezone
@@ -12,6 +12,7 @@ from app.dependencies import (
     analytics, cache, ws_limiter,
 )
 from app.routers.auth import get_current_user
+from app.services.auth import require_role
 from app.db import models
 
 router = APIRouter(tags=["System"])
@@ -38,18 +39,18 @@ async def health_check():
             "translation_engine": translation_engine.get_status(),
             "active_connections": manager.active_count(),
             "active_sessions": session_mgr.active_count,
-            "cache": cache.get_stats(),
+            "cache": await cache.get_stats(),
         },
         config=settings.summary(),
     )
 
 
-@router.get("/api/analytics", tags=["Analytics"])
+@router.get("/api/analytics", tags=["Analytics"], dependencies=[require_role("admin")])
 async def get_analytics():
     return {
         **analytics.get_summary(),
         "sessions": session_mgr.get_summary(),
-        "cache": cache.get_stats(),
+        "cache": await cache.get_stats(),
         "rate_limiter": ws_limiter.get_stats(),
     }
 
@@ -61,11 +62,11 @@ async def get_sessions():
 
 @router.get("/api/cache")
 async def get_cache_stats():
-    return cache.get_stats()
+    return await cache.get_stats()
 
 
-@router.delete("/api/cache")
-async def clear_cache(current_user: models.User = Depends(get_current_user)):
-    """Requires authentication."""
-    cache.clear()
+@router.delete("/api/cache", dependencies=[require_role("admin")])
+async def clear_cache():
+    """Admin-only: purge all translation caches."""
+    await cache.clear()
     return {"status": "cleared"}

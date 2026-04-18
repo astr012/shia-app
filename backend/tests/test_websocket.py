@@ -108,7 +108,7 @@ class TestSignToSpeechPipeline:
             })
             data = ws.receive_json()
             assert data["type"] == "error"
-            assert "No gestures" in data["payload"]["message"]
+            assert "No valid gestures" in data["payload"]["message"]
 
 
 class TestSpeechToSignPipeline:

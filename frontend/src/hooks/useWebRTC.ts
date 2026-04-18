@@ -15,9 +15,18 @@ export function useWebRTC({ ws, localStream, onSubtitleReceived }: UseWebRTCOpti
   
   // Create a new Peer Connection
   const initializePeerConnection = useCallback((targetSessionId: string) => {
-    // 1. Setup PC with public Google STUN for NAT Hole Punching
+    // 1. Setup PC with STUN + TURN structures for NAT Hole Punching and Relay Fallback
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        // Phase 5 Structural Scaffolding: In production, configure TURN credentials 
+        // to relay streaming constraints when symmetric NAT layers block P2P DataChannels.
+        {
+          urls: process.env.NEXT_PUBLIC_TURN_URL || 'turn:turn.signai.os:3478',
+          username: process.env.NEXT_PUBLIC_TURN_USERNAME || 'fallback_relay_user',
+          credential: process.env.NEXT_PUBLIC_TURN_PASSWORD || 'fallback_relay_pass'
+        }
+      ]
     });
 
     // 2. Add local stream tracks to PC

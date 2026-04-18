@@ -215,8 +215,15 @@ class TranslationEngine:
     """
 
     def __init__(self):
+        import time
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.client = None
+        
+        # Self-Healing Circuit Breaker Configuration
+        self._llm_failures = 0
+        self._llm_blacklist_until = 0
+        self._failure_threshold = 3
+        self._blacklist_duration_sec = 60
 
         if self.api_key:
             try:
@@ -241,12 +248,29 @@ class TranslationEngine:
         if not text.strip():
             return []
 
+        import time
+
+        # Self-Healing Check: Is the LLM route currently blacklisted?
+        if self._llm_blacklist_until > time.time():
+            logger.debug(f"LLM route blacklisted. Fast-failing to deterministic vocabulary rules.")
+            return self._translate_with_vocabulary(text)
+
         # Try LLM for better phrase decomposition
         if self.client:
             try:
-                return await self._translate_with_llm(text)
+                result = await self._translate_with_llm(text)
+                self._llm_failures = 0
+                return result
             except Exception as e:
-                logger.error(f"LLM translation failed: {e}. Using vocabulary fallback.")
+                self._llm_failures += 1
+                logger.error(f"LLM translation failed ({self._llm_failures}/{self._failure_threshold}): {e}")
+                
+                # Trip the circuit breaker if threshold reached
+                if self._llm_failures >= self._failure_threshold:
+                    self._llm_blacklist_until = time.time() + self._blacklist_duration_sec
+                    logger.critical(f"Circuit Breaker tripped! Blacklisting stochastic route for {self._blacklist_duration_sec}s.")
+                    
+                return self._translate_with_vocabulary(text)
 
         # Vocabulary-based fallback
         return self._translate_with_vocabulary(text)

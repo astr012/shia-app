@@ -63,9 +63,16 @@ class GrammarEngine:
     """
 
     def __init__(self):
+        import time
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         self.client = None
+        
+        # Self-Healing Circuit Breaker Configuration
+        self._llm_failures = 0
+        self._llm_blacklist_until = 0
+        self._failure_threshold = 3
+        self._blacklist_duration_sec = 60
 
         if self.api_key:
             try:
@@ -90,14 +97,31 @@ class GrammarEngine:
         if not raw_text.strip():
             return ""
 
+        import time
+        
+        # Self-Healing Check: Is the LLM route currently blacklisted?
+        if self._llm_blacklist_until > time.time():
+            logger.debug(f"LLM route blacklisted. Fast-failing to deterministic rules.")
+            return self._process_with_rules(raw_text)
+
         # Try LLM first
         if self.client:
             try:
-                return await self._process_with_llm(raw_text)
+                result = await self._process_with_llm(raw_text)
+                self._llm_failures = 0 # Reset on success
+                return result
             except Exception as e:
-                logger.error(f"LLM processing failed: {e}. Falling back to rules.")
+                self._llm_failures += 1
+                logger.error(f"LLM inference timeout/error ({self._llm_failures}/{self._failure_threshold}): {e}")
+                
+                # Trip the circuit breaker if threshold reached
+                if self._llm_failures >= self._failure_threshold:
+                    self._llm_blacklist_until = time.time() + self._blacklist_duration_sec
+                    logger.critical(f"Circuit Breaker tripped! Blacklisting stochastic route for {self._blacklist_duration_sec}s.")
+                    
+                return self._process_with_rules(raw_text)
 
-        # Fallback to rule-based
+        # Standard Fallback to rule-based
         return self._process_with_rules(raw_text)
 
     async def _process_with_llm(self, raw_text: str) -> str:

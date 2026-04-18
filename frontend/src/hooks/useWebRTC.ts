@@ -12,6 +12,7 @@ export function useWebRTC({ ws, localStream, onSubtitleReceived }: UseWebRTCOpti
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [peerConnection, setPeerConnection] = useState<RTCPeerConnection | null>(null);
   const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(null);
+  const [isUsingFallbackRelay, setIsUsingFallbackRelay] = useState<boolean>(false);
   
   // Create a new Peer Connection
   const initializePeerConnection = useCallback((targetSessionId: string) => {
@@ -60,6 +61,14 @@ export function useWebRTC({ ws, localStream, onSubtitleReceived }: UseWebRTCOpti
       onSubtitleReceived?.(event.data);
     };
     setDataChannel(dc);
+
+    // 5b. Self-Healing Fail-Safe (Hole-Punching State Awareness)
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+        console.warn("[WebRTC] Symmetric NAT block detected. Failing over to WebSocket relay.");
+        setIsUsingFallbackRelay(true);
+      }
+    };
 
     // 6. Handle receiving Data Channel
     pc.ondatachannel = (event) => {
@@ -125,11 +134,24 @@ export function useWebRTC({ ws, localStream, onSubtitleReceived }: UseWebRTCOpti
     }
   }, [peerConnection]);
 
-  const sendSubtitle = useCallback((text: string) => {
-    if (dataChannel && dataChannel.readyState === 'open') {
+  const sendSubtitle = useCallback((text: string, remoteSessionId?: string) => {
+    // 1. Primary Route: P2P DataChannel
+    if (!isUsingFallbackRelay && dataChannel && dataChannel.readyState === 'open') {
       dataChannel.send(text);
+      return;
     }
-  }, [dataChannel]);
+    
+    // 2. Self-Healing Fallback: WebSocket Global Relay
+    if (isUsingFallbackRelay && ws && ws.readyState === WebSocket.OPEN && remoteSessionId) {
+      ws.send(JSON.stringify({
+        type: 'webrtc_fallback_subtitle',
+        payload: {
+          target_session_id: remoteSessionId,
+          data: text
+        }
+      }));
+    }
+  }, [dataChannel, isUsingFallbackRelay, ws]);
 
   const endCall = useCallback(() => {
     if (peerConnection) {

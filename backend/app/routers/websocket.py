@@ -120,7 +120,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
                         "session_id": session.session_id,
                     })
 
-                elif msg_type in ["webrtc_offer", "webrtc_answer", "webrtc_ice"]:
+                elif msg_type in ["webrtc_offer", "webrtc_answer", "webrtc_ice", "webrtc_fallback_subtitle"]:
                     target_session_id = payload.get("target_session_id")
                     if target_session_id:
                         target_session = session_mgr.get_session_by_id(target_session_id)

@@ -16,6 +16,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from starlette.websockets import WebSocketClose
 
+from app.db.database import async_session_maker
+from app.db.crud import get_user_by_username, get_user_custom_dictionary
+
 from app.config import settings
 from app.dependencies import (
     manager, session_mgr, grammar_engine, translation_engine,
@@ -62,6 +65,17 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
 
     logger.info(f"Client connected [session={session.session_id}] [user={ws_user or 'anon'}] | Active: {manager.active_count()}")
 
+    # 1a. Core Database Load: Securely isolate custom dialects for user
+    local_custom_rules = {}
+    if ws_user and ws_user != "__invalid__":
+        async with async_session_maker() as db:
+            user = await get_user_by_username(db, ws_user)
+            if user:
+                entries = await get_user_custom_dictionary(db, user.id)
+                for e in entries:
+                    local_custom_rules[e.gesture_sequence.lower().strip()] = e.meaning
+        logger.info(f"[WS:{session.session_id}] Loaded {len(local_custom_rules)} custom dialect rules.")
+
     # Send session info to the client
     await _send_ws(websocket, "session_info", {
         "session_id": session.session_id,
@@ -96,7 +110,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
                 if msg_type == "gesture_sequence":
                     session_mgr.record_gesture(websocket)
                     analytics.record_request(session.session_id, "gesture_sequence")
-                    await _handle_gesture_sequence(websocket, payload, session.session_id)
+                    await _handle_gesture_sequence(websocket, payload, session.session_id, local_custom_rules)
 
                 elif msg_type == "speech_input":
                     session_mgr.record_speech(websocket)
@@ -106,7 +120,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
                 elif msg_type == "manual_text":
                     session_mgr.record_manual(websocket)
                     analytics.record_request(session.session_id, "manual_text")
-                    await _handle_manual_text(websocket, payload, session.session_id)
+                    await _handle_manual_text(websocket, payload, session.session_id, local_custom_rules)
 
                 elif msg_type == "set_mode":
                     new_mode = payload.get("mode", "SIGN_TO_SPEECH")
@@ -168,7 +182,7 @@ def _sanitize_ai_input(text: str, max_len: int = 250) -> str:
     sanitized = re.sub(r'[^\w\s\.,\?!-]', '', text)
     return sanitized[:max_len].strip()
 
-async def _handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str):
+async def _handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str, custom_rules: dict = None):
     """
     SIGN → SPEECH Pipeline:
     Landmark seq / Gesture labels → ML Classify → Grammar Engine (LLM) → Natural text → Send for TTS
@@ -202,14 +216,19 @@ async def _handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str
     logger.info(f"[Pipeline:{session_id}] Raw gesture text: {raw_text}")
 
     # Step 2: Check cache first, then grammar engine (primary/secondary layer)
-    cached = await cache.get_grammar(raw_text)
+    # Exclude cache lookup if using isolated custom rules to avoid polluting global state
+    cached = await cache.get_grammar(raw_text) if not (custom_rules and raw_text in custom_rules) else None
+    
     if cached:
         corrected_text = cached
         duration_ms = float((time.perf_counter() - start) * 1000)
         logger.info(f"[Pipeline:{session_id}] Cache HIT: {corrected_text} ({duration_ms:.1f}ms)")
     else:
-        corrected_text = await grammar_engine.process(raw_text)
-        await cache.set_grammar(raw_text, corrected_text)
+        corrected_text = await grammar_engine.process(raw_text, custom_rules)
+        # Avoid caching user-specific isolated endpoints to prevent global cache poisoning
+        if not custom_rules or raw_text not in custom_rules:
+            await cache.set_grammar(raw_text, corrected_text)
+            
         duration_ms = float((time.perf_counter() - start) * 1000)
         logger.info(f"[Pipeline:{session_id}] Corrected text: {corrected_text} ({duration_ms:.1f}ms)")
 
@@ -274,7 +293,7 @@ async def _handle_speech_input(ws: WebSocket, payload: dict, session_id: str):
     })
 
 
-async def _handle_manual_text(ws: WebSocket, payload: dict, session_id: str):
+async def _handle_manual_text(ws: WebSocket, payload: dict, session_id: str, custom_rules: dict = None):
     """Handle manual text input — route based on mode. Uses cache to avoid redundant LLM calls."""
     text = _sanitize_ai_input(payload.get("text", ""))
     mode = payload.get("mode", "SIGN_TO_SPEECH")
@@ -287,12 +306,13 @@ async def _handle_manual_text(ws: WebSocket, payload: dict, session_id: str):
 
     if mode == "SIGN_TO_SPEECH":
         # Check cache first
-        cached = await cache.get_grammar(text)
+        cached = await cache.get_grammar(text) if not (custom_rules and text in custom_rules) else None
         if cached:
             corrected = cached
         else:
-            corrected = await grammar_engine.process(text)
-            await cache.set_grammar(text, corrected)
+            corrected = await grammar_engine.process(text, custom_rules)
+            if not custom_rules or text not in custom_rules:
+                await cache.set_grammar(text, corrected)
 
         duration_ms = float((time.perf_counter() - start) * 1000)
         analytics.record_latency("grammar", duration_ms)

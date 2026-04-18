@@ -84,12 +84,13 @@ class GrammarEngine:
         else:
             logger.info("No OPENAI_API_KEY found. Using rule-based grammar engine.")
 
-    async def process(self, raw_text: str) -> str:
+    async def process(self, raw_text: str, custom_rules: Optional[dict] = None) -> str:
         """
         Convert raw gesture labels into natural language.
         
         Args:
             raw_text: Space-separated gesture labels (e.g., "hello how you")
+            custom_rules: Dictionary mapping custom strings to translations.
         
         Returns:
             Natural language text (e.g., "Hello! How are you?")
@@ -102,12 +103,12 @@ class GrammarEngine:
         # Self-Healing Check: Is the LLM route currently blacklisted?
         if self._llm_blacklist_until > time.time():
             logger.debug(f"LLM route blacklisted. Fast-failing to deterministic rules.")
-            return self._process_with_rules(raw_text)
+            return self._process_with_rules(raw_text, custom_rules)
 
         # Try LLM first
         if self.client:
             try:
-                result = await self._process_with_llm(raw_text)
+                result = await self._process_with_llm(raw_text, custom_rules)
                 self._llm_failures = 0 # Reset on success
                 return result
             except Exception as e:
@@ -119,12 +120,12 @@ class GrammarEngine:
                     self._llm_blacklist_until = time.time() + self._blacklist_duration_sec
                     logger.critical(f"Circuit Breaker tripped! Blacklisting stochastic route for {self._blacklist_duration_sec}s.")
                     
-                return self._process_with_rules(raw_text)
+                return self._process_with_rules(raw_text, custom_rules)
 
         # Standard Fallback to rule-based
-        return self._process_with_rules(raw_text)
+        return self._process_with_rules(raw_text, custom_rules)
 
-    async def _process_with_llm(self, raw_text: str) -> str:
+    async def _process_with_llm(self, raw_text: str, custom_rules: Optional[dict] = None) -> str:
         """Use OpenAI to restructure sign language grammar into spoken English."""
         system_prompt = """You are a sign language to spoken English translator. 
 You receive raw gesture labels detected from sign language and must convert them 
@@ -138,6 +139,10 @@ Rules:
 - Make it sound natural and conversational
 - Only output the translated text, nothing else
 - If the input is a single greeting gesture, respond with the appropriate greeting"""
+
+        if custom_rules:
+            custom_prompt_chain = "\\n".join([f'- "{k}" should become "{v}"' for k, v in custom_rules.items()])
+            system_prompt += f"\\n\\nUser-Specific Custom Rules (highest priority):\\n{custom_prompt_chain}"
 
         response = await self.client.chat.completions.create(
             model=self.model,
@@ -153,11 +158,15 @@ Rules:
         logger.info(f"LLM translation: '{raw_text}' → '{result}'")
         return result
 
-    def _process_with_rules(self, raw_text: str) -> str:
+    def _process_with_rules(self, raw_text: str, custom_rules: Optional[dict] = None) -> str:
         """Rule-based grammar correction (offline fallback)."""
         normalized = raw_text.lower().strip()
+        
+        # 0. Deterministic Custom Rules precedence
+        if custom_rules and normalized in custom_rules:
+            return custom_rules[normalized]
 
-        # Check exact match first
+        # 1. Check exact match first
         if normalized in GRAMMAR_RULES:
             return GRAMMAR_RULES[normalized]
 

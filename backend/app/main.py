@@ -33,17 +33,17 @@ from app.routers import health, auth, translation, tts, users, websocket, ml
 logger = logging.getLogger("signai")
 
 
-# â”€â”€ Lifespan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ============================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle."""
-    logger.info("â”" * 60)
-    logger.info(f"ðŸŸ¢ {settings.APP_NAME} v{settings.APP_VERSION} starting")
+    logger.info("=" * 60)
+    logger.info(f"O {settings.APP_NAME} v{settings.APP_VERSION} starting")
     logger.info(f"   Environment : {settings.ENV}")
     logger.info(f"   Grammar AI  : {'OpenAI (' + settings.OPENAI_MODEL + ')' if settings.OPENAI_API_KEY else 'Rule-based (fallback)'}")
     logger.info(f"   Frontend URL: {settings.FRONTEND_URL}")
-    logger.info("â”" * 60)
+    logger.info("=" * 60)
 
     # Initialize Core Database Architecture (PostgreSQL/SQLite)
     try:
@@ -53,11 +53,11 @@ async def lifespan(app: FastAPI):
         logger.error(f"   Database   : Failed to initialize - {e}")
 
     yield
-    logger.info(f"ðŸ”´ {settings.APP_NAME} shutting down | Uptime: {analytics.uptime_formatted}")
-    logger.info("â”" * 60)
+    logger.info(f"X {settings.APP_NAME} shutting down | Uptime: {analytics.uptime_formatted}")
+    logger.info("=" * 60)
 
 
-# â”€â”€ App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ============================================================
 
 app = FastAPI(
     title=f"{settings.APP_NAME} API",

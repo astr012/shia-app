@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from starlette.websockets import WebSocketClose
 
-from app.db.database import async_session_maker
+from app.db.database import AsyncSessionLocal
 from app.db.crud import get_user_by_username, get_user_custom_dictionary
 
 from app.config import settings
@@ -68,7 +68,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
     # 1a. Core Database Load: Securely isolate custom dialects for user
     local_custom_rules = {}
     if ws_user and ws_user != "__invalid__":
-        async with async_session_maker() as db:
+        async with AsyncSessionLocal() as db:
             user = await get_user_by_username(db, ws_user)
             if user:
                 entries = await get_user_custom_dictionary(db, user.id)

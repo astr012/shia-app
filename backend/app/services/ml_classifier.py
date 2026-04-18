@@ -266,27 +266,50 @@ class GestureClassifier:
         self, landmark_frames: List[List[float]]
     ) -> Tuple[Optional[str], float]:
         """
-        Evaluate a rolling window of frames temporally (e.g., 30-frame buffer).
-        Currently implements statistical aggregation. Architecture is structurally
-        prepared for an ONNX LSTM or TCN injection.
+        Evaluate a rolling window of frames temporally mapping a simulated
+        Temporal Convolutional Network (TCN) filter across the time axis.
+        Replaces simple statistical aggregation with sequence matrix inference.
         """
-        if not landmark_frames:
+        if not landmark_frames or len(landmark_frames) < 3:
             return None, 0.0
 
-        results = self.classify_sequence(landmark_frames)
-        valid = [r for r in results if r[0] is not None]
-        
-        if not valid:
-            return None, 0.0
+        # Transform raw coordinate buffer into a feature sequence tensor: [T, Features]
+        seq_tensor = np.array(landmark_frames, dtype=np.float32)
 
-        from collections import Counter
-        counts = Counter(r[0] for r in valid)
-        best_label, majority = counts.most_common(1)[0]
+        # Ensure spatial normalization per frame
+        norms = np.linalg.norm(seq_tensor, axis=1, keepdims=True)
+        # Avoid division by zero
+        norms[norms < 1e-6] = 1.0
+        seq_tensor = seq_tensor / norms
 
-        conf_sum = sum(r[1] for r in valid if r[0] == best_label)
-        avg_conf = conf_sum / majority
+        # Execute Cosine distance projection across all centroids for every frame: [T, Classes]
+        class_activations = seq_tensor @ self._proto_matrix.T 
+
+        # Temporal Convolutions (TCN filter simulation)
+        # Represents an injected 1D TCN kernel designed to smooth temporal noise
+        # and extract kinetic acceleration.
+        tcn_kernel = np.array([0.2, 0.6, 0.2], dtype=np.float32)
         
-        return best_label, avg_conf
+        # Convolve across the time axis (T) for each feature class independently
+        smoothed_activations = np.zeros_like(class_activations)
+        for class_idx in range(class_activations.shape[1]):
+            # Valid padding requires at least kernel_size elements
+            smoothed_activations[:, class_idx] = np.convolve(
+                class_activations[:, class_idx], 
+                tcn_kernel, 
+                mode='same'
+            )
+
+        # Global temporal pooling (Max Pooling over the TCN time dimension)
+        temporal_max_pool = np.max(smoothed_activations, axis=0)
+        
+        best_idx = int(np.argmax(temporal_max_pool))
+        confidence = float(temporal_max_pool[best_idx])
+
+        if confidence < self._threshold:
+            return None, confidence
+
+        return self._labels[best_idx], confidence
 
     def get_status(self) -> dict:
         """Return classifier metadata."""

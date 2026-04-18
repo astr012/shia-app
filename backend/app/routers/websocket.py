@@ -155,8 +155,18 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
 
 
 # ══════════════════════════════════════════════════════════════
-# PIPELINE HANDLERS
+# PIPELINE HANDLERS & SECURITY PROTOCOLS
 # ══════════════════════════════════════════════════════════════
+
+import re
+
+def _sanitize_ai_input(text: str, max_len: int = 250) -> str:
+    """Enterprise Red-Team Constraint: Strip control sequences and bound length to prevent Token Exhaustion."""
+    if not text:
+        return ""
+    # Strip non-printable and anomalous characters (allows basic punctuation/alphanumeric)
+    sanitized = re.sub(r'[^\w\s\.,\?!-]', '', text)
+    return sanitized[:max_len].strip()
 
 async def _handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str):
     """
@@ -236,9 +246,9 @@ async def _handle_speech_input(ws: WebSocket, payload: dict, session_id: str):
     SPEECH → SIGN Pipeline:
     Spoken text → Translation Engine → Sign language sequence
     """
-    text = payload.get("text", "")
+    text = _sanitize_ai_input(payload.get("text", ""))
     if not text:
-        await _send_ws(ws, "error", {"message": "No text provided"})
+        await _send_ws(ws, "error", {"message": "No text provided or invalid format"})
         return
 
     start = time.perf_counter()
@@ -266,8 +276,12 @@ async def _handle_speech_input(ws: WebSocket, payload: dict, session_id: str):
 
 async def _handle_manual_text(ws: WebSocket, payload: dict, session_id: str):
     """Handle manual text input — route based on mode. Uses cache to avoid redundant LLM calls."""
-    text = payload.get("text", "")
+    text = _sanitize_ai_input(payload.get("text", ""))
     mode = payload.get("mode", "SIGN_TO_SPEECH")
+
+    if not text:
+        await _send_ws(ws, "error", {"message": "No text provided or invalid format"})
+        return
 
     start = time.perf_counter()
 

@@ -171,15 +171,15 @@ async def _handle_gesture_sequence(ws: WebSocket, payload: dict, session_id: str
     ml_confidence_metrics = []
 
     if landmarks:
-        raw_gestures = []
-        for index, frame in enumerate(landmarks):
-            label, confidence = classifier.classify(frame)
-            if label:
-                raw_gestures.append(label)
-                ml_confidence_metrics.append({"frame": index, "label": label, "confidence": round(confidence, 3)})
-        
-        # Merge consecutive identical ML gesture predictions
-        gestures = [raw_gestures[i] for i in range(len(raw_gestures)) if i == 0 or raw_gestures[i] != raw_gestures[i-1]]
+        # Pass the entire buffer window for temporal classification
+        best_label, temp_conf = classifier.classify_temporal(landmarks)
+        if best_label:
+            gestures = [best_label]
+            ml_confidence_metrics.append({
+                "temporal_window_size": len(landmarks), 
+                "label": best_label, 
+                "confidence": round(temp_conf, 3)
+            })
 
     if not gestures:
         await _send_ws(ws, "error", {"message": "No valid gestures or landmarks provided"})

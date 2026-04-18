@@ -262,6 +262,32 @@ class GestureClassifier:
         """Classify a sequence of landmark frames."""
         return [self.classify(frame) for frame in landmark_frames]
 
+    def classify_temporal(
+        self, landmark_frames: List[List[float]]
+    ) -> Tuple[Optional[str], float]:
+        """
+        Evaluate a rolling window of frames temporally (e.g., 30-frame buffer).
+        Currently implements statistical aggregation. Architecture is structurally
+        prepared for an ONNX LSTM or TCN injection.
+        """
+        if not landmark_frames:
+            return None, 0.0
+
+        results = self.classify_sequence(landmark_frames)
+        valid = [r for r in results if r[0] is not None]
+        
+        if not valid:
+            return None, 0.0
+
+        from collections import Counter
+        counts = Counter(r[0] for r in valid)
+        best_label, majority = counts.most_common(1)[0]
+
+        conf_sum = sum(r[1] for r in valid if r[0] == best_label)
+        avg_conf = conf_sum / majority
+        
+        return best_label, avg_conf
+
     def get_status(self) -> dict:
         """Return classifier metadata."""
         return {

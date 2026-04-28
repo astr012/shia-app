@@ -23,3 +23,9 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Database
+*.db
+signai.db
+*.sqlite
+*.sqlite3

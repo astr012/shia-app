@@ -59,15 +59,16 @@ class Settings(BaseSettings):
     ]
 
     # â”€â”€ Content Security Policy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    CSP_DIRECTIVES: str = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com; "
-        "img-src 'self' data: blob:; "
-        "connect-src 'self' ws://localhost:* wss://localhost:* http://localhost:*; "
-        "media-src 'self' blob:; "
-        "worker-src 'self' blob:;"
+    CSP_DIRECTIVES: str = (\r
+        "default-src 'self'; "\r
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "\r
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "\r
+        "font-src 'self' https://fonts.gstatic.com; "\r
+        "img-src 'self' data: blob:; "\r
+        "connect-src 'self' ws://localhost:* wss://localhost:* http://localhost:* "\r
+        "https://*.onrender.com wss://*.onrender.com https://*.vercel.app; "\r
+        "media-src 'self' blob:; "\r
+        "worker-src 'self' blob:;"\r
     )
 
     # â”€â”€ Password Policy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -116,10 +117,10 @@ class Settings(BaseSettings):
     def assemble_origins(cls, v, info):
         """Ensure FRONTEND_URL is always in the allowed origins."""
         if isinstance(v, str):
-            origins = [o.strip() for o in v.split(",")]
+            origins = [o.strip().rstrip("/") for o in v.split(",")]
         else:
-            origins = list(v) if v else []
-        frontend_url = info.data.get("FRONTEND_URL", "http://localhost:3000")
+            origins = [o.rstrip("/") for o in v] if v else []
+        frontend_url = info.data.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
         if frontend_url not in origins:
             origins.append(frontend_url)
         return origins
@@ -129,10 +130,10 @@ class Settings(BaseSettings):
     def assemble_csrf_origins(cls, v, info):
         """Ensure FRONTEND_URL is always in the CSRF trusted origins."""
         if isinstance(v, str):
-            origins = [o.strip() for o in v.split(",")]
+            origins = [o.strip().rstrip("/") for o in v.split(",")]
         else:
-            origins = list(v) if v else []
-        frontend_url = info.data.get("FRONTEND_URL", "http://localhost:3000")
+            origins = [o.rstrip("/") for o in v] if v else []
+        frontend_url = info.data.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
         if frontend_url not in origins:
             origins.append(frontend_url)
         return origins

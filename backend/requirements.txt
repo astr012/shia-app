@@ -11,6 +11,7 @@ pydantic-settings>=2.2.0,<3.0.0
 
 # AI / NLP (optional — falls back gracefully if not available)
 openai>=1.12.0,<2.0.0
+numpy>=1.26.0
 
 # Environment
 python-dotenv>=1.0.0,<2.0.0

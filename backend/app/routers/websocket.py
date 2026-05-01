@@ -18,6 +18,8 @@ from starlette.websockets import WebSocketClose
 
 from app.db.database import AsyncSessionLocal
 from app.db.crud import get_user_by_username, get_user_custom_dictionary
+from app.db.schemas import VisionPayload
+from pydantic import ValidationError
 
 from app.config import settings
 from app.dependencies import (
@@ -108,9 +110,17 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
                 logger.info(f"[WS:{session.session_id}] ← {msg_type}")
 
                 if msg_type == "gesture_sequence":
+                    try:
+                        # Validate multi-dimensional vector inputs
+                        validated_payload = VisionPayload(**payload)
+                    except ValidationError as e:
+                        logger.warning(f"[WS:{session.session_id}] Validation Error: {e.errors()}")
+                        await _send_ws(websocket, "error", {"message": "Invalid vector payload format", "details": e.errors()})
+                        continue
+
                     session_mgr.record_gesture(websocket)
                     analytics.record_request(session.session_id, "gesture_sequence")
-                    await _handle_gesture_sequence(websocket, payload, session.session_id, local_custom_rules)
+                    await _handle_gesture_sequence(websocket, validated_payload.model_dump(), session.session_id, local_custom_rules)
 
                 elif msg_type == "speech_input":
                     session_mgr.record_speech(websocket)

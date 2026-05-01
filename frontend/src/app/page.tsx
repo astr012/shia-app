@@ -13,6 +13,8 @@ import QuickActions from '@/components/SignAI/QuickActions';
 import TranscriptLog from '@/components/SignAI/TranscriptLog';
 import SignPlayer from '@/components/SignAI/SignPlayer';
 import Footer from '@/components/SignAI/Footer';
+import { useDatabaseFailover } from '@/hooks/useDatabaseFailover';
+import { useEffect } from 'react';
 
 export default function Home() {
   const {
@@ -39,6 +41,15 @@ export default function Home() {
     isReachable,
     latencyMs,
   } = useServerHealth({ enabled: true });
+
+  const { attemptResync } = useDatabaseFailover();
+
+  // Edge State Resilience: Automatically flush offline IndexedDB queue when backend becomes reachable
+  useEffect(() => {
+    if (isReachable) {
+      attemptResync();
+    }
+  }, [isReachable, attemptResync]);
 
   const handleToggleSystem = () => {
     if (isActive) {

@@ -20,7 +20,9 @@ import {
   RotateCcw,
   CheckCircle,
   AlertTriangle,
+  BookOpen,
 } from 'lucide-react';
+import CustomDialectManager from '@/components/SignAI/CustomDialectManager';
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -372,6 +374,12 @@ export default function SettingsPage() {
           label={`${(settings.gestureConfidenceThreshold * 100).toFixed(0)}%`}
         />
       </SettingRow>
+
+      {/* ═══════ CUSTOM DIALECTS ═══════ */}
+      <SectionHeader icon={BookOpen} title="Custom Dialect (Edge Persisted)" />
+      <div className="mb-8">
+        <CustomDialectManager />
+      </div>
 
       {/* ═══════ SYSTEM INFO ═══════ */}
       <SectionHeader icon={Info} title="System Info" />

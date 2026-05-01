@@ -61,6 +61,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
         await websocket.close(code=4001, reason="Invalid authentication token")
         return
 
+    # Red Team Mitigation: Event-Loop Starvation & FD Exhaustion protection
+    MAX_CONNECTIONS = getattr(settings, "WS_MAX_CONNECTIONS", 1000)
+    if manager.active_count() >= MAX_CONNECTIONS:
+        await websocket.close(code=1013, reason="Server at capacity")
+        return
+
     await manager.connect(websocket)
     session = session_mgr.create_session(websocket)
     analytics.register_session(session.session_id)

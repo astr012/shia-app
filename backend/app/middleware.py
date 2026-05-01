@@ -128,12 +128,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Identify client by IP (handles proxied requests via X-Forwarded-For)
-        client_ip = (
-            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-            or request.client.host
-            if request.client
-            else "unknown"
-        )
+        # Use the last IP in the chain to prevent client-side spoofing behind proxies
+        x_forwarded_for = request.headers.get("x-forwarded-for", "")
+        if x_forwarded_for:
+            client_ip = x_forwarded_for.split(",")[-1].strip()
+        else:
+            client_ip = request.client.host if request.client else "unknown"
 
         if not _rest_limiter.check(f"rest:{client_ip}"):
             req_id = getattr(request.state, "request_id", "?")

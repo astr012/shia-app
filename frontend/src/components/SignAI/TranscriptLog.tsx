@@ -40,7 +40,7 @@ export default function TranscriptLog({ logs, isActive, onManualInput }: Transcr
 
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="font-pixel text-2xl text-white">/// TRANSCRIPT_LOG</h2>
+      <h2 className="font-pixel text-2xl text-white">{'/// TRANSCRIPT_LOG'}</h2>
 
       <div className="bg-black border-2 border-white h-[500px] flex flex-col relative">
         {/* Scroll Area */}

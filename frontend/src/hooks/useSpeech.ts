@@ -10,6 +10,9 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+// Module-scope constant — stable reference, no dependency churn
+const FATAL_ERRORS = ['network', 'not-allowed', 'service-not-allowed', 'language-not-supported'] as const;
+
 // ── TEXT-TO-SPEECH ──────────────────────────────────────────
 
 interface UseTTSOptions {
@@ -156,7 +159,10 @@ export function useSpeechToText({
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
-  const [isSupported, setIsSupported] = useState(false);
+  const [isSupported] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  });
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   // Retry state to prevent infinite error loops on ALL devices
@@ -166,16 +172,6 @@ export function useSpeechToText({
   const intentionalStop = useRef(false);
 
   const MAX_RETRIES = 3;
-  const FATAL_ERRORS = ['network', 'not-allowed', 'service-not-allowed', 'language-not-supported'];
-
-  // Check browser support
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const SpeechRecognition =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
-      setIsSupported(!!SpeechRecognition);
-    }
-  }, []);
 
   const startListening = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -232,7 +228,7 @@ export function useSpeechToText({
       const err = event.error;
 
       // Fatal errors: stop retrying entirely
-      if (FATAL_ERRORS.includes(err)) {
+      if ((FATAL_ERRORS as readonly string[]).includes(err)) {
         hadFatalError.current = true;
         setIsListening(false);
 

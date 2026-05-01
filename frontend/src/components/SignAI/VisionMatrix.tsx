@@ -5,7 +5,7 @@
 // NOW with REAL camera feed + MediaPipe hand tracking overlay
 // ============================================================
 
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Eye, Camera, AlertTriangle } from 'lucide-react';
 import { useMediaPipe, HandTrackingResult } from '@/hooks/useMediaPipe';
@@ -26,8 +26,6 @@ export default function VisionMatrix({ isActive, onGestureResult }: VisionMatrix
     error,
     fps,
     lastResult,
-    startCamera,
-    stopCamera,
     deviceTier,
     isShedding,
   } = useMediaPipe({
@@ -46,18 +44,14 @@ export default function VisionMatrix({ isActive, onGestureResult }: VisionMatrix
     },
   });
 
-  // Track camera permission state
-  useEffect(() => {
-    if (isTracking) {
-      setCameraPermission('granted');
-    }
-  }, [isTracking]);
+  // Derive camera permission from tracking state
+  const derivedPermission = isTracking ? 'granted' : cameraPermission;
 
   return (
     <div className="flex flex-col gap-4">
       {/* Section Title */}
       <div className="flex justify-between items-end">
-        <h2 className="font-pixel text-2xl text-matrix">/// VISUAL_INPUT_MATRIX</h2>
+        <h2 className="font-pixel text-2xl text-matrix">{'/// VISUAL_INPUT_MATRIX'}</h2>
         <div className="flex items-center gap-3">
           {isActive && (
             <motion.span
@@ -130,7 +124,7 @@ export default function VisionMatrix({ isActive, onGestureResult }: VisionMatrix
               <p className="font-pixel text-xl text-gray-600 tracking-widest">CAMERA OFFLINE</p>
               <p className="font-mono text-xs text-gray-700 mt-2">PRESS INITIALIZE TO BEGIN</p>
             </motion.div>
-          ) : error || cameraPermission === 'denied' ? (
+          ) : error || derivedPermission === 'denied' ? (
             /* ── ERROR / PERMISSION DENIED STATE ── */
             <motion.div
               key="error"

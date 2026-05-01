@@ -152,6 +152,7 @@ export function usePipeline(): PipelineState & PipelineActions {
           console.log('[Pipeline] Unknown message type:', message.type);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- speak/playServerAudio defined after this hook; hook ordering constraint
     [mode, addLog]
   );
 
@@ -164,7 +165,7 @@ export function usePipeline(): PipelineState & PipelineActions {
     });
 
   // ── Wire up Text-to-Speech ────────────────────────────────
-  const { speak, isSpeaking } = useTextToSpeech({
+  const { speak } = useTextToSpeech({
     rate: 0.95,
     onStart: () => addLog('SYSTEM', '[TTS]: Speaking...'),
     onEnd: () => addLog('SYSTEM', '[TTS]: Complete'),
@@ -188,11 +189,11 @@ export function usePipeline(): PipelineState & PipelineActions {
       setIsProcessing(true);
       addLog('SYSTEM', '[PROCESSING]: Converting speech to sign sequence...');
     },
-    [wsSend]
+    [wsSend, addLog]
   );
 
   const {
-    isListening,
+    // isListening state consumed implicitly by STT engine
     startListening,
     stopListening,
   } = useSpeechToText({
@@ -242,7 +243,7 @@ export function usePipeline(): PipelineState & PipelineActions {
         }
       }, 1200); // 1.2s of no new gestures = flush (was 2s — faster for all devices)
     },
-    [isActive, mode, wsSend]
+    [isActive, mode, wsSend, addLog]
   );
 
   // ── Pipeline Control ──────────────────────────────────────

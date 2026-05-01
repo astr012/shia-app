@@ -11,56 +11,76 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+// ── MediaPipe Type Contracts (CDN-loaded, no @types available) ──
+
+interface VisionState {
+  hands: { x: number; y: number; z: number }[][];
+  pose: ({ x: number; y: number; z: number } & { visibility?: number })[] | null;
+  face: { x: number; y: number; z: number }[][];
+}
+
+interface MediaPipeInstance {
+  initialize(): Promise<void>;
+  setOptions(options: Record<string, unknown>): void;
+  onResults(callback: (results: Record<string, unknown>) => void): void;
+  send(input: { image: HTMLVideoElement }): Promise<void>;
+}
+
+interface MediaPipeCamera {
+  start(): Promise<void>;
+  stop(): void;
+}
+
+interface MediaPipeCameraConstructor {
+  new (video: HTMLVideoElement, options: { onFrame: () => Promise<void>; width: number; height: number }): MediaPipeCamera;
+}
+
 // --- MediaPipe Global Singleton ---
 // Instantiating Hands multiple times (e.g., in React StrictMode) causes
 // Emscripten memory corruption and XHR fetch aborts. A singleton prevents this.
-let globalHandsInstance: any = null;
-let globalPoseInstance: any = null;
-let globalFaceMeshInstance: any = null;
-let globalCameraClass: any = null;
+let globalHandsInstance: MediaPipeInstance | null = null;
+let globalPoseInstance: MediaPipeInstance | null = null;
+let globalFaceMeshInstance: MediaPipeInstance | null = null;
+let globalCameraClass: MediaPipeCameraConstructor | null = null;
 let mediaPipeInitPromise: Promise<void> | null = null;
-let activeOnResultsCallback: ((results: any) => void) | null = null;
-let activeVisionState: any = { hands: [], pose: null, face: [] };
+let activeOnResultsCallback: ((results: VisionState) => void) | null = null;
+const activeVisionState: VisionState = { hands: [], pose: null, face: [] };
 
-async function initMediaPipe(deviceProfile: any) {
+async function initMediaPipe() {
   if (globalHandsInstance && globalPoseInstance && globalFaceMeshInstance && globalCameraClass) return;
   if (!mediaPipeInitPromise) {
     mediaPipeInitPromise = (async () => {
-      // @ts-ignore
       const { Hands } = await import('@mediapipe/hands');
-      // @ts-ignore
       const { Pose } = await import('@mediapipe/pose');
-      // @ts-ignore
       const { FaceMesh } = await import('@mediapipe/face_mesh');
-      // @ts-ignore
       const { Camera } = await import('@mediapipe/camera_utils');
       
       globalHandsInstance = new Hands({
         locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
-      });
+      }) as unknown as MediaPipeInstance;
       await globalHandsInstance.initialize();
 
       globalPoseInstance = new Pose({
         locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`,
-      });
+      }) as unknown as MediaPipeInstance;
       await globalPoseInstance.initialize();
 
       globalFaceMeshInstance = new FaceMesh({
         locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`,
-      });
+      }) as unknown as MediaPipeInstance;
       await globalFaceMeshInstance.initialize();
 
-      globalCameraClass = Camera;
+      globalCameraClass = Camera as unknown as MediaPipeCameraConstructor;
       
       // Route results to whatever component is currently active
-      globalPoseInstance.onResults((results: any) => {
-        activeVisionState.pose = results.poseLandmarks || null;
+      globalPoseInstance.onResults((results: Record<string, unknown>) => {
+        activeVisionState.pose = (results.poseLandmarks as VisionState['pose']) || null;
       });
-      globalFaceMeshInstance.onResults((results: any) => {
-        activeVisionState.face = results.multiFaceLandmarks || [];
+      globalFaceMeshInstance.onResults((results: Record<string, unknown>) => {
+        activeVisionState.face = (results.multiFaceLandmarks as VisionState['face']) || [];
       });
-      globalHandsInstance.onResults((results: any) => {
-        activeVisionState.hands = results.multiHandLandmarks || [];
+      globalHandsInstance.onResults((results: Record<string, unknown>) => {
+        activeVisionState.hands = (results.multiHandLandmarks as VisionState['hands']) || [];
         if (activeOnResultsCallback) {
           activeOnResultsCallback(activeVisionState);
         }
@@ -127,7 +147,6 @@ function detectDeviceProfile(): DeviceProfile {
   }
 
   const cores = navigator.hardwareConcurrency || 2;
-  // @ts-ignore — deviceMemory is available on Chrome/Edge
   const memory = (navigator as { deviceMemory?: number }).deviceMemory || 4;
   const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|Opera Mini/i.test(navigator.userAgent);
   const isLowEnd = cores <= 2 || memory <= 2 || (isMobile && cores <= 4);
@@ -205,14 +224,6 @@ class GestureStabilizer {
 
 // ── Gesture Classification (expanded — 25+ gestures) ─────────
 
-function angleBetween(a: HandLandmark, b: HandLandmark, c: HandLandmark): number {
-  const ab = { x: a.x - b.x, y: a.y - b.y };
-  const cb = { x: c.x - b.x, y: c.y - b.y };
-  const dot = ab.x * cb.x + ab.y * cb.y;
-  const cross = ab.x * cb.y - ab.y * cb.x;
-  return Math.atan2(cross, dot) * (180 / Math.PI);
-}
-
 function dist(a: HandLandmark, b: HandLandmark): number {
   return Math.hypot(a.x - b.x, a.y - b.y, (a.z ?? 0) - (b.z ?? 0));
 }
@@ -240,7 +251,6 @@ function classifyGesture(landmarks: HandLandmark[]): { gesture: string; confiden
   const [thumb, index, middle, ring, pinky] = fingerStates;
   const extendedCount = fingerStates.filter(Boolean).length;
   const thumbIndexDist = dist(landmarks[4], landmarks[8]);
-  const thumbMiddleDist = dist(landmarks[4], landmarks[12]);
   const indexMiddleDist = dist(landmarks[8], landmarks[12]);
   const palmSize = dist(wrist, landmarks[9]);
 
@@ -369,14 +379,46 @@ export function useMediaPipe({
 
   const streamRef = useRef<MediaStream | null>(null);
   const animationRef = useRef<number | null>(null);
-  const handsRef = useRef<unknown>(null);
-  const poseRef = useRef<unknown>(null);
-  const faceMeshRef = useRef<unknown>(null);
-  const cameraRef = useRef<unknown>(null);
+  const handsRef = useRef<MediaPipeInstance | null>(null);
+  const poseRef = useRef<MediaPipeInstance | null>(null);
+  const faceMeshRef = useRef<MediaPipeInstance | null>(null);
+  const cameraRef = useRef<MediaPipeCamera | null>(null);
   const fpsCounter = useRef({ frames: 0, lastTime: performance.now(), lowFpsTicks: 0 });
   const frameCount = useRef(0);
   const stabilizerRef = useRef(new GestureStabilizer(deviceProfile.smoothingWindow));
   const shedModelsRef = useRef(false);
+
+  // Simulation mode when MediaPipe is not installed
+  const startSimulation = useCallback(() => {
+    setIsTracking(true);
+    setFps(30);
+
+    const simulate = () => {
+      const t = Date.now() / 1000;
+      const fakeLandmarks: HandLandmark[] = Array.from({ length: 21 }, (_, i) => ({
+        x: 0.3 + 0.4 * Math.sin(t + i * 0.3) * (i / 21),
+        y: 0.2 + 0.5 * Math.cos(t + i * 0.2) * (i / 21),
+        z: -0.1 + 0.05 * Math.sin(t * 2 + i),
+      }));
+
+      const gestures = ['HELLO', 'THANK_YOU', 'YES', 'NO', 'HELP', 'OPEN_PALM', 'POINT', 'THUMBS_UP', 'I_LOVE_YOU', 'PEACE'];
+      const gestureIndex = Math.floor(t / 3) % gestures.length;
+
+      const result: HandTrackingResult = {
+        landmarks: [fakeLandmarks],
+        gesture: gestures[gestureIndex],
+        confidence: 0.88 + Math.random() * 0.11,
+        timestamp: Date.now(),
+      };
+
+      setLastResult(result);
+      onResult?.(result);
+
+      animationRef.current = requestAnimationFrame(simulate);
+    };
+
+    animationRef.current = requestAnimationFrame(simulate);
+  }, [onResult]);
 
   const startCamera = useCallback(async () => {
     if (!videoRef.current) {
@@ -407,11 +449,11 @@ export function useMediaPipe({
 
       // Dynamically import MediaPipe using the singleton to avoid Emscripten crashes
       try {
-        await initMediaPipe(deviceProfile);
-        const hands = globalHandsInstance;
-        const pose = globalPoseInstance;
-        const faceMesh = globalFaceMeshInstance;
-        const Camera = globalCameraClass;
+        await initMediaPipe();
+        const hands = globalHandsInstance!;
+        const pose = globalPoseInstance!;
+        const faceMesh = globalFaceMeshInstance!;
+        const Camera = globalCameraClass!;
 
         hands.setOptions({
           maxNumHands: maxHands,
@@ -432,7 +474,7 @@ export function useMediaPipe({
         });
 
         // Setup callback routing
-        activeOnResultsCallback = (visionState: any) => {
+        activeOnResultsCallback = (visionState: VisionState) => {
           // Frame skipping for low-end devices
           frameCount.current++;
           if (frameCount.current % deviceProfile.frameSkip !== 0) return;
@@ -475,7 +517,7 @@ export function useMediaPipe({
 
           const trackingResult: HandTrackingResult = {
             landmarks,
-            poseLandmarks: visionState.pose,
+            poseLandmarks: visionState.pose ?? undefined,
             faceLandmarks: visionState.face,
             gesture,
             confidence,
@@ -504,9 +546,9 @@ export function useMediaPipe({
           onFrame: async () => {
             if (videoRef.current) {
               const promises = [];
-              if (handsRef.current) promises.push((handsRef.current as any).send({ image: videoRef.current }));
-              if (poseRef.current && !shedModelsRef.current) promises.push((poseRef.current as any).send({ image: videoRef.current }));
-              if (faceMeshRef.current) promises.push((faceMeshRef.current as any).send({ image: videoRef.current }));
+              if (handsRef.current) promises.push(handsRef.current.send({ image: videoRef.current }));
+              if (poseRef.current && !shedModelsRef.current) promises.push(poseRef.current.send({ image: videoRef.current }));
+              if (faceMeshRef.current) promises.push(faceMeshRef.current.send({ image: videoRef.current }));
               await Promise.all(promises);
             }
           },
@@ -531,39 +573,9 @@ export function useMediaPipe({
       onError?.(message);
       setIsLoading(false);
     }
-  }, [videoRef, canvasRef, onResult, onError, maxHands, minDetectionConfidence, minTrackingConfidence, deviceProfile]);
+  }, [videoRef, canvasRef, onResult, onError, maxHands, minDetectionConfidence, minTrackingConfidence, deviceProfile, startSimulation]);
 
-  // Simulation mode when MediaPipe is not installed
-  const startSimulation = useCallback(() => {
-    setIsTracking(true);
-    setFps(30);
 
-    const simulate = () => {
-      const t = Date.now() / 1000;
-      const fakeLandmarks: HandLandmark[] = Array.from({ length: 21 }, (_, i) => ({
-        x: 0.3 + 0.4 * Math.sin(t + i * 0.3) * (i / 21),
-        y: 0.2 + 0.5 * Math.cos(t + i * 0.2) * (i / 21),
-        z: -0.1 + 0.05 * Math.sin(t * 2 + i),
-      }));
-
-      const gestures = ['HELLO', 'THANK_YOU', 'YES', 'NO', 'HELP', 'OPEN_PALM', 'POINT', 'THUMBS_UP', 'I_LOVE_YOU', 'PEACE'];
-      const gestureIndex = Math.floor(t / 3) % gestures.length;
-
-      const result: HandTrackingResult = {
-        landmarks: [fakeLandmarks],
-        gesture: gestures[gestureIndex],
-        confidence: 0.88 + Math.random() * 0.11,
-        timestamp: Date.now(),
-      };
-
-      setLastResult(result);
-      onResult?.(result);
-
-      animationRef.current = requestAnimationFrame(simulate);
-    };
-
-    animationRef.current = requestAnimationFrame(simulate);
-  }, [onResult]);
 
   const stopCamera = useCallback(() => {
     // Stop animation frame
@@ -574,7 +586,7 @@ export function useMediaPipe({
 
     // Stop MediaPipe camera
     if (cameraRef.current) {
-      (cameraRef.current as any).stop();
+      cameraRef.current.stop();
       cameraRef.current = null;
     }
 

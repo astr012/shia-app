@@ -33,7 +33,7 @@ export function useDatabaseFailover() {
     };
   }, []);
 
-  const saveOfflineAction = useCallback((endpoint: string, payload: any) => {
+  const saveOfflineAction = useCallback((endpoint: string, payload: Record<string, unknown>) => {
     if (!dbInstance) return;
     
     return new Promise((resolve, reject) => {
@@ -75,14 +75,14 @@ export function useDatabaseFailover() {
             const delTx = dbInstance.transaction(['offline_sync_queue'], 'readwrite');
             delTx.objectStore('offline_sync_queue').delete(item.id);
           }
-        } catch (e) {
+        } catch {
           console.warn(`[Sync] Resync failed for ID ${item.id}. Keeping in failover queue.`);
         }
       }
     };
   }, [dbInstance]);
 
-  const saveDialectProfileOffline = useCallback((userId: string | number, profileData: any) => {
+  const saveDialectProfileOffline = useCallback((userId: string | number, profileData: Record<string, unknown>) => {
     if (!dbInstance) return;
     
     return new Promise((resolve, reject) => {

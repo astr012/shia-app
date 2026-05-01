@@ -7,10 +7,16 @@ async def get_user_by_username(db: AsyncSession, username: str):
     return result.scalars().first()
 
 async def create_user(db: AsyncSession, username: str, password_hash: str, dialect: str = "ASL"):
-    db_user = User(username=username, password_hash=password_hash, dialect=dialect)
+    db_user = User(username=username, password_hash=password_hash)
     db.add(db_user)
     await db.commit()
     await db.refresh(db_user)
+    
+    from app.db.models import DialectProfile
+    db_profile = DialectProfile(user_id=db_user.id, primary_dialect=dialect)
+    db.add(db_profile)
+    await db.commit()
+    
     return db_user
 
 async def add_custom_dictionary_entry(db: AsyncSession, user_id: int, gesture_sequence: str, meaning: str):

@@ -128,7 +128,7 @@ function SectionHeader({ title, icon: Icon }: { title: string; icon: React.Compo
   return (
     <div className="flex items-center gap-3 mb-4 mt-10 first:mt-0">
       <Icon size={18} className="text-matrix" />
-      <h2 className="font-pixel text-2xl text-white tracking-wider">/// {title}</h2>
+      <h2 className="font-pixel text-2xl text-white tracking-wider">{'/// '}{title}</h2>
       <div className="flex-1 border-b border-white/10" />
     </div>
   );
@@ -191,9 +191,13 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    fetchAll();
+    // Deferred initial fetch — avoids synchronous setState cascade
+    const initial = setTimeout(fetchAll, 0);
     const timer = setInterval(fetchAll, 8000);
-    return () => clearInterval(timer);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(timer);
+    };
   }, [fetchAll]);
 
   const handleClearCache = async () => {

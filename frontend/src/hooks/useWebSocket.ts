@@ -97,7 +97,7 @@ export function useWebSocket({
           setLastMessage(message);
           
           if (message.type === 'session_info') {
-            const sid = (message.payload as any)?.session_id;
+            const sid = (message.payload as { session_id?: string })?.session_id;
             if (sid) setSessionId(sid);
           }
 

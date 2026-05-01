@@ -1,8 +1,8 @@
 'use client';
 
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Video, PhoneOff } from 'lucide-react';
+import { PhoneOff } from 'lucide-react';
 
 interface WebRTCConferenceProps {
   remoteStream: MediaStream | null;
@@ -60,7 +60,7 @@ export default function WebRTCConference({ remoteStream, remoteSubtitle, onEndCa
           key={remoteSubtitle}
         >
           <div className="bg-black/80 text-yellow-300 font-pixel text-xl px-6 py-3 border border-yellow-500/50 max-w-[80%] text-center leading-relaxed">
-            "{remoteSubtitle}"
+            &ldquo;{remoteSubtitle}&rdquo;
           </div>
         </motion.div>
       )}

@@ -73,16 +73,13 @@ export default function SignPlayer({ signSequence, sourceText, processingTimeMs,
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Parse tokens when sequence changes
-  useEffect(() => {
-    if (signSequence.length > 0) {
-      const parsed = parseTokens(signSequence);
-      setTokens(parsed);
-      setCurrentIndex(-1);
-      setHasFinished(false);
-      // Auto-play when new sequence arrives
-      setIsPlaying(true);
-    }
-  }, [signSequence]);
+  const parsedTokens = signSequence.length > 0 ? parseTokens(signSequence) : tokens;
+  if (signSequence.length > 0 && parsedTokens !== tokens && JSON.stringify(parsedTokens) !== JSON.stringify(tokens)) {
+    setTokens(parsedTokens);
+    setCurrentIndex(-1);
+    setHasFinished(false);
+    setIsPlaying(true);
+  }
 
   // Playback engine
   const advanceToken = useCallback(() => {
@@ -102,8 +99,9 @@ export default function SignPlayer({ signSequence, sourceText, processingTimeMs,
 
     // Start from beginning if not started
     if (currentIndex === -1) {
-      setCurrentIndex(0);
-      return;
+      // Use timeout to avoid synchronous setState cascade
+      const startTimer = setTimeout(() => setCurrentIndex(0), 0);
+      return () => clearTimeout(startTimer);
     }
 
     const currentToken = tokens[currentIndex];

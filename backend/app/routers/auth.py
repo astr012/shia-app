@@ -74,7 +74,7 @@ async def register(user: UserRegister, db: AsyncSession = Depends(get_db)):
     return {
         "id": new_user.id,
         "username": new_user.username, 
-        "dialect": new_user.dialect,
+        "dialect": user.dialect,
         "access_token": access_token,
         "token_type": "bearer"
     }
@@ -97,6 +97,5 @@ async def get_me(current_user: models.User = Depends(get_current_user)):
     return {
         "id": current_user.id,
         "username": current_user.username,
-        "dialect": current_user.dialect,
         "preferences": current_user.preferences
     }

@@ -134,16 +134,11 @@ function Slider({
 // ── Main Page ────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const [settings, setSettings] = useState<SettingsState>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<SettingsState>(() => loadSettings());
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [saved, setSaved] = useState(false);
   const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [backendVersion, setBackendVersion] = useState<string | null>(null);
-
-  // Load settings on mount
-  useEffect(() => {
-    setSettings(loadSettings());
-  }, []);
 
   // Load available TTS voices
   useEffect(() => {
@@ -184,7 +179,8 @@ export default function SettingsPage() {
   }, [settings.apiUrl]);
 
   useEffect(() => {
-    checkBackend();
+    const timer = setTimeout(checkBackend, 0);
+    return () => clearTimeout(timer);
   }, [checkBackend]);
 
   // Update a single setting

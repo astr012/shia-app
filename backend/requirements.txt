@@ -22,6 +22,8 @@ edge-tts>=6.1.0
 # Database (async SQLAlchemy + SQLite dev / PostgreSQL prod)
 sqlalchemy>=2.0.0,<3.0.0
 aiosqlite>=0.19.0
+asyncpg>=0.29.0
+alembic>=1.13.0
 
 # Security & Auth
 PyJWT[crypto]>=2.8.0

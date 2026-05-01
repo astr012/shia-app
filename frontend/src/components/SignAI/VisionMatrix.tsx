@@ -5,7 +5,7 @@
 // NOW with REAL camera feed + MediaPipe hand tracking overlay
 // ============================================================
 
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Eye, Camera, AlertTriangle } from 'lucide-react';
 import { useMediaPipe, HandTrackingResult } from '@/hooks/useMediaPipe';
@@ -13,9 +13,10 @@ import { useMediaPipe, HandTrackingResult } from '@/hooks/useMediaPipe';
 interface VisionMatrixProps {
   isActive: boolean;
   onGestureResult?: (result: HandTrackingResult) => void;
+  onStreamAvailable?: (stream: MediaStream | null) => void;
 }
 
-export default function VisionMatrix({ isActive, onGestureResult }: VisionMatrixProps) {
+export default function VisionMatrix({ isActive, onGestureResult, onStreamAvailable }: VisionMatrixProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [cameraPermission, setCameraPermission] = useState<'prompt' | 'granted' | 'denied'>('prompt');
@@ -28,6 +29,7 @@ export default function VisionMatrix({ isActive, onGestureResult }: VisionMatrix
     lastResult,
     deviceTier,
     isShedding,
+    localStream,
   } = useMediaPipe({
     videoRef,
     canvasRef,
@@ -43,6 +45,10 @@ export default function VisionMatrix({ isActive, onGestureResult }: VisionMatrix
       }
     },
   });
+
+  useEffect(() => {
+    onStreamAvailable?.(localStream);
+  }, [localStream, onStreamAvailable]);
 
   // Derive camera permission from tracking state
   const derivedPermission = isTracking ? 'granted' : cameraPermission;

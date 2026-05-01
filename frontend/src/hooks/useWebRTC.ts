@@ -13,6 +13,7 @@ export function useWebRTC({ ws, localStream, onSubtitleReceived }: UseWebRTCOpti
   const [peerConnection, setPeerConnection] = useState<RTCPeerConnection | null>(null);
   const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(null);
   const [isUsingFallbackRelay, setIsUsingFallbackRelay] = useState<boolean>(false);
+  const [activeRemoteSessionId, setActiveRemoteSessionId] = useState<string | null>(null);
   
   // Create a new Peer Connection
   const initializePeerConnection = useCallback((targetSessionId: string) => {
@@ -86,6 +87,7 @@ export function useWebRTC({ ws, localStream, onSubtitleReceived }: UseWebRTCOpti
   const initiateCall = useCallback(async (targetSessionId: string) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     
+    setActiveRemoteSessionId(targetSessionId);
     const pc = initializePeerConnection(targetSessionId);
     
     // Create Offer
@@ -105,6 +107,7 @@ export function useWebRTC({ ws, localStream, onSubtitleReceived }: UseWebRTCOpti
   const handleIncomingOffer = useCallback(async (fromSessionId: string, offer: RTCSessionDescriptionInit) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     
+    setActiveRemoteSessionId(fromSessionId);
     const pc = initializePeerConnection(fromSessionId);
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
     
@@ -134,7 +137,7 @@ export function useWebRTC({ ws, localStream, onSubtitleReceived }: UseWebRTCOpti
     }
   }, [peerConnection]);
 
-  const sendSubtitle = useCallback((text: string, remoteSessionId?: string) => {
+  const sendSubtitle = useCallback((text: string) => {
     // 1. Primary Route: P2P DataChannel
     if (!isUsingFallbackRelay && dataChannel && dataChannel.readyState === 'open') {
       dataChannel.send(text);
@@ -142,16 +145,16 @@ export function useWebRTC({ ws, localStream, onSubtitleReceived }: UseWebRTCOpti
     }
     
     // 2. Self-Healing Fallback: WebSocket Global Relay
-    if (isUsingFallbackRelay && ws && ws.readyState === WebSocket.OPEN && remoteSessionId) {
+    if (isUsingFallbackRelay && ws && ws.readyState === WebSocket.OPEN && activeRemoteSessionId) {
       ws.send(JSON.stringify({
         type: 'webrtc_fallback_subtitle',
         payload: {
-          target_session_id: remoteSessionId,
+          target_session_id: activeRemoteSessionId,
           data: text
         }
       }));
     }
-  }, [dataChannel, isUsingFallbackRelay, ws]);
+  }, [dataChannel, isUsingFallbackRelay, ws, activeRemoteSessionId]);
 
   const endCall = useCallback(() => {
     if (peerConnection) {
@@ -159,6 +162,7 @@ export function useWebRTC({ ws, localStream, onSubtitleReceived }: UseWebRTCOpti
       setPeerConnection(null);
       setRemoteStream(null);
       setDataChannel(null);
+      setActiveRemoteSessionId(null);
     }
   }, [peerConnection]);
 

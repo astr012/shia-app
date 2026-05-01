@@ -35,6 +35,7 @@ interface UseWebSocketReturn {
   disconnect: () => void;
   lastMessage: WSMessage | null;
   sessionId: string | null;
+  ws: WebSocket | null;
 }
 
 export function useWebSocket({
@@ -175,5 +176,5 @@ export function useWebSocket({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoConnect]);
 
-  return { status, send, connect, disconnect, lastMessage, sessionId };
+  return { status, send, connect, disconnect, lastMessage, sessionId, ws: wsRef.current };
 }

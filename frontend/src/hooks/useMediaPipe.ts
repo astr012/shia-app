@@ -126,6 +126,7 @@ interface UseMediaPipeReturn {
   stopCamera: () => void;
   deviceTier: 'low' | 'mid' | 'high';
   isShedding: boolean;
+  localStream: MediaStream | null;
 }
 
 // ── Device Capability Detection ──────────────────────────────
@@ -373,6 +374,7 @@ export function useMediaPipe({
   const [fps, setFps] = useState(0);
   const [lastResult, setLastResult] = useState<HandTrackingResult | null>(null);
   const [isShedding, setIsShedding] = useState(false);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 
   // Detect device capability once
   const [deviceProfile] = useState(() => detectDeviceProfile());
@@ -444,6 +446,7 @@ export function useMediaPipe({
       });
 
       streamRef.current = stream;
+      setLocalStream(stream);
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
 
@@ -603,6 +606,7 @@ export function useMediaPipe({
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
+      setLocalStream(null);
     }
 
     // Reset video element
@@ -642,6 +646,7 @@ export function useMediaPipe({
     stopCamera,
     deviceTier: deviceProfile.tier,
     isShedding,
+    localStream,
   };
 }
 

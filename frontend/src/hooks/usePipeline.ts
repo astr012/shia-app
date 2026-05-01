@@ -46,6 +46,9 @@ interface PipelineState {
   signSequence: string[];
   signSourceText: string;
   signProcessingTime: number;
+  ws: WebSocket | null;
+  sessionId: string | null;
+  lastMessage: WSMessage | null;
 }
 
 interface PipelineActions {
@@ -176,7 +179,7 @@ export function usePipeline(): PipelineState & PipelineActions {
     [mode, addLog]
   );
 
-  const { status: wsStatus, send: wsSend, connect: wsConnect, disconnect: wsDisconnect } =
+  const { status: wsStatus, send: wsSend, connect: wsConnect, disconnect: wsDisconnect, ws, sessionId, lastMessage } =
     useWebSocket({
       url: WS_URL,
       autoConnect: false,
@@ -428,6 +431,9 @@ export function usePipeline(): PipelineState & PipelineActions {
     signSequence,
     signSourceText,
     signProcessingTime,
+    ws,
+    sessionId,
+    lastMessage,
 
     // Actions
     startPipeline,

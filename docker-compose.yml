@@ -22,6 +22,24 @@ services:
       timeout: 5s
       retries: 3
 
+  db:
+    image: "postgres:15-alpine"
+    container_name: shia-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=signai
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   backend:
     build:
       context: ./backend
@@ -37,8 +55,11 @@ services:
       - PORT=8000
       - FRONTEND_URL=http://localhost:3000
       - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/signai
     depends_on:
       redis:
+        condition: service_healthy
+      db:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -63,3 +84,5 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+volumes:
+  pgdata:

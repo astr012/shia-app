@@ -10,7 +10,10 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+if (!process.env.NEXT_PUBLIC_API_URL) {
+  console.error("CRITICAL ERROR: NEXT_PUBLIC_API_URL is missing.");
+}
 const POLL_INTERVAL_MS = 5000;  // Poll every 5 seconds
 
 export interface ServerHealth {

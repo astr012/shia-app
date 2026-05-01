@@ -35,7 +35,7 @@ interface SettingsState {
 }
 
 const DEFAULT_SETTINGS: SettingsState = {
-  apiUrl: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+  apiUrl: process.env.NEXT_PUBLIC_API_URL || '',
   ttsRate: 1.0,
   ttsPitch: 1.0,
   ttsVoice: '',

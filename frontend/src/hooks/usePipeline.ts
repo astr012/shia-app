@@ -25,7 +25,10 @@ import { createLogEntry } from '@/lib/utils';
 
 // ── Configuration ───────────────────────────────────────────
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws';
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || '';
+if (!process.env.NEXT_PUBLIC_WS_URL) {
+  console.error("CRITICAL ERROR: NEXT_PUBLIC_WS_URL is missing.");
+}
 const GESTURE_DEBOUNCE_MS = 800;   // Fast response on all devices
 const GESTURE_CONFIDENCE_THRESHOLD = 0.75;
 
@@ -145,6 +148,23 @@ export function usePipeline(): PipelineState & PipelineActions {
 
         case 'heartbeat': {
           // Ignore heartbeat ping
+          break;
+        }
+
+        // ── Phase 5: WebRTC Fallback Relay Routing ──
+        case 'webrtc_fallback_subtitle': {
+          const { data } = message.payload as { data: string };
+          addLog('SYSTEM', `[RELAY SUBTITLE]: "${data}"`);
+          // Note: In Phase 5 UI, this will also trigger setRemoteSubtitle
+          break;
+        }
+
+        case 'webrtc_offer':
+        case 'webrtc_answer':
+        case 'webrtc_ice': {
+          // Future Phase 5 integration: Route signaling to useWebRTC hook
+          // Currently logged for diagnostic purposes
+          addLog('SYSTEM', `[WebRTC Signaling]: Received ${message.type}`);
           break;
         }
 

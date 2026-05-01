@@ -59,16 +59,16 @@ class Settings(BaseSettings):
     ]
 
     # â”€â”€ Content Security Policy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    CSP_DIRECTIVES: str = (\r
-        "default-src 'self'; "\r
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "\r
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "\r
-        "font-src 'self' https://fonts.gstatic.com; "\r
-        "img-src 'self' data: blob:; "\r
-        "connect-src 'self' ws://localhost:* wss://localhost:* http://localhost:* "\r
-        "https://*.onrender.com wss://*.onrender.com https://*.vercel.app; "\r
-        "media-src 'self' blob:; "\r
-        "worker-src 'self' blob:;"\r
+    CSP_DIRECTIVES: str = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' ws://localhost:* wss://localhost:* http://localhost:* "
+        "https://*.onrender.com wss://*.onrender.com https://*.vercel.app; "
+        "media-src 'self' blob:; "
+        "worker-src 'self' blob:;"
     )
 
     # â”€â”€ Password Policy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

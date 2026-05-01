@@ -19,6 +19,9 @@ export function useDatabaseFailover() {
       if (!db.objectStoreNames.contains('offline_sync_queue')) {
         db.createObjectStore('offline_sync_queue', { keyPath: 'id', autoIncrement: true });
       }
+      if (!db.objectStoreNames.contains('dialect_profiles')) {
+        db.createObjectStore('dialect_profiles', { keyPath: 'user_id' });
+      }
     };
 
     request.onsuccess = (event) => {
@@ -79,5 +82,38 @@ export function useDatabaseFailover() {
     };
   }, [dbInstance]);
 
-  return { saveOfflineAction, attemptResync };
+  const saveDialectProfileOffline = useCallback((userId: string | number, profileData: any) => {
+    if (!dbInstance) return;
+    
+    return new Promise((resolve, reject) => {
+      const transaction = dbInstance.transaction(['dialect_profiles'], 'readwrite');
+      const store = transaction.objectStore('dialect_profiles');
+      
+      const request = store.put({
+        user_id: userId,
+        profile: profileData,
+        last_synced: Date.now()
+      });
+
+      request.onsuccess = () => resolve(true);
+      request.onerror = (e) => reject(e);
+    });
+  }, [dbInstance]);
+
+  const getDialectProfileOffline = useCallback((userId: string | number) => {
+    if (!dbInstance) return Promise.resolve(null);
+    
+    return new Promise((resolve, reject) => {
+      const transaction = dbInstance.transaction(['dialect_profiles'], 'readonly');
+      const store = transaction.objectStore('dialect_profiles');
+      const request = store.get(userId);
+
+      request.onsuccess = () => {
+        resolve(request.result?.profile || null);
+      };
+      request.onerror = (e) => reject(e);
+    });
+  }, [dbInstance]);
+
+  return { saveOfflineAction, attemptResync, saveDialectProfileOffline, getDialectProfileOffline };
 }

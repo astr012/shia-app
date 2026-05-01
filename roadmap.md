@@ -47,24 +47,24 @@ For every module, an uncompromising engineering standard is enforced: Every feat
 
 ---
 
-## Phase 2: Advanced Capabilities (Future Implementations)
+## Phase 2: Advanced Capabilities (Implemented)
 
 ### 6. Multi-Modal Vision Processing Expansion
-**Status:** Planned
+**Status:** Implemented
 **Description:** Upgrading MediaPipe algorithms beyond `Hands` to incorporate `Pose` and `Face Mesh`. Essential for capturing the crucial facial grammar of ASL.
 - **E2E Audit Task:** Memory boundary testing. Evaluate VRAM / RAM spikes during concurrent multi-model executions on standardized mid-tier hardware.
 - **Pipeline Connectivity Audit:** Ensure the primary WebSocket ingress `Pydantic` models possess elastic validation structures to handle facial arrays without rejecting standard legacy hand structs.
 - **Self-Healing & Fail-Safe Architecture:** Implement predictive thermal/frame monitoring. If the user's device begins to lag (FPS drops under 10), the application heals the stream by automatically shedding the Face Mesh and Pose models, alerting the user while persisting solely on lightweight Hands tracking.
 
 ### 7. Core Database & Identity Architecture
-**Status:** Planned
+**Status:** Implemented
 **Description:** Persistent user profiling via PostgreSQL mapping regional dialects (e.g., BSL vs ASL) and bespoke conversational dictionaries.
 - **E2E Audit Task:** Formulate SQL injection matrices and execute JWT token manipulation assessments mimicking unauthorized administrative privilege escalation.
 - **Pipeline Connectivity Audit:** Investigate how customized user dictionaries securely merge with the global inference context without polluting the core logic trees.
 - **Self-Healing & Fail-Safe Architecture:** Database agnostic redundancy. The edge client mirrors user profiles via `IndexedDB`. If the primary PostgreSQL cluster isolates due to network failures, the web client seamlessly loads its local state without halting translation abilities, syncing upstream upon restoration.
 
 ### 8. WebRTC Peer-to-Peer Visual Conferencing
-**Status:** Planned
+**Status:** Implemented
 **Description:** Direct P2P secure video calls displaying live gesture-translated subtitles across remote clients.
 - **E2E Audit Task:** STUN/TURN server leak audits. Protect P2P clients from exposing raw IP data to malicious endpoints.
 - **Pipeline Connectivity Audit:** WebRTC datachannel flows circumvent the traditional WebSocket FastAPI boundary. Ensure the translation orchestration syncs properly via RTCDataChannels.

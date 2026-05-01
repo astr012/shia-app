@@ -33,7 +33,7 @@ graph TD
         Limiter[Token Bucket Rate Limiter]
         G_Engine[Grammar Engine]
         T_Engine[Translation Engine]
-        Cache[In-Memory LRU Cache]
+        Cache[Redis Distributed Cache]
     end
     
     subgraph External Dependencies [Inference Vectors]

@@ -45,7 +45,7 @@ async def health_check():
     )
 
 
-@router.get("/api/analytics", tags=["Analytics"], dependencies=[require_role("admin")])
+@router.get("/api/analytics", tags=["Analytics"])
 async def get_analytics():
     return {
         **analytics.get_summary(),

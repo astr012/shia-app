@@ -233,8 +233,8 @@ export function useSpeechToText({
         setIsListening(false);
 
         if (err === 'network') {
-          console.warn('[STT] Network error — requires internet for Chrome Speech API. Stopping retries.');
-          onError?.('Speech recognition requires internet connection (Chrome sends audio to Google servers). Use manual text input instead.');
+          console.warn('[STT] Network error — requires internet and Google API access for Chrome Speech API. Stopping retries.');
+          onError?.('Speech recognition requires Google API access. Please use standard Google Chrome or Edge. Brave/Chromium often block this. If using Chrome, check ad-blockers. Alternatively, use manual text input.');
         } else if (err === 'not-allowed') {
           console.warn('[STT] Microphone permission denied.');
           onError?.('Microphone access denied. Please allow microphone in browser settings.');

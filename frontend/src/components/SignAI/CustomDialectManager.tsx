@@ -20,8 +20,9 @@ export default function CustomDialectManager() {
     
     // Load local cache immediately
     getDialectProfileOffline('local_user').then((profile) => {
-      if (profile && Array.isArray((profile as any).entries)) {
-        setSavedDialects((profile as any).entries);
+      const typedProfile = profile as { entries?: Array<{ gesture_sequence: string; meaning: string }> } | null;
+      if (typedProfile && Array.isArray(typedProfile.entries)) {
+        setSavedDialects(typedProfile.entries);
       }
     });
   }, [attemptResync, getDialectProfileOffline]);

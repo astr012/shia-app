@@ -63,16 +63,17 @@ export default function Home() {
     if (!lastMessage) return;
 
     const { type, payload } = lastMessage;
-    const { from_session, data } = (payload as any) || {};
+    const { from_session, data } = (payload as Record<string, unknown>) || {};
 
     if (type === 'webrtc_offer' && data) {
-      handleIncomingOffer(from_session, data);
+      handleIncomingOffer(from_session as string, data as RTCSessionDescriptionInit);
     } else if (type === 'webrtc_answer' && data) {
-      handleIncomingAnswer(data);
+      handleIncomingAnswer(data as RTCSessionDescriptionInit);
     } else if (type === 'webrtc_ice' && data) {
-      handleIncomingICE(data);
+      handleIncomingICE(data as RTCIceCandidateInit);
     } else if (type === 'webrtc_fallback_subtitle' && data) {
-      setRemoteSubtitle(data);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRemoteSubtitle(data as string);
     }
   }, [lastMessage, handleIncomingOffer, handleIncomingAnswer, handleIncomingICE]);
 

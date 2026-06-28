@@ -5,7 +5,12 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
-  serverExternalPackages: ["@mediapipe/hands", "@mediapipe/camera_utils"],
+  serverExternalPackages: [
+    "@mediapipe/hands",
+    "@mediapipe/camera_utils",
+    "@mediapipe/pose",
+    "@mediapipe/face_mesh",
+  ],
 };
 
 export default nextConfig;

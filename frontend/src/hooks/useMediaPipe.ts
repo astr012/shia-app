@@ -191,18 +191,45 @@ function detectDeviceProfile(): DeviceProfile {
 class GestureStabilizer {
   private buffer: string[] = [];
   private windowSize: number;
+  private lastEmitted: string | null = null;
 
   constructor(windowSize: number = 3) {
     this.windowSize = windowSize;
   }
 
-  push(gesture: string): string | null {
+  /**
+   * Push a gesture into the stabilizer.
+   * Returns the stabilized gesture or null if uncertain.
+   *
+   * Three fast-paths:
+   * 1. High-confidence bypass (caller signals via pushWithConfidence)
+   * 2. Transition detection — new gesture differs from last emitted → emit immediately
+   * 3. Majority vote at 50% threshold
+   */
+  push(gesture: string, confidence?: number): string | null {
+    // Fast-path: high-confidence detection bypasses the window
+    if (confidence !== undefined && confidence > 0.88) {
+      this.lastEmitted = gesture;
+      this.buffer = [gesture]; // reset buffer to the new gesture
+      return gesture;
+    }
+
     this.buffer.push(gesture);
     if (this.buffer.length > this.windowSize) {
       this.buffer.shift();
     }
 
-    // Only emit if the same gesture appears in majority of window
+    // Transition detection: if new gesture differs from last emitted and
+    // appears at least twice in the buffer, emit immediately
+    if (this.lastEmitted !== null && gesture !== this.lastEmitted) {
+      const countNew = this.buffer.filter(g => g === gesture).length;
+      if (countNew >= 2) {
+        this.lastEmitted = gesture;
+        return gesture;
+      }
+    }
+
+    // Majority vote — need buffer full
     if (this.buffer.length < this.windowSize) return null;
 
     const counts: Record<string, number> = {};
@@ -210,9 +237,13 @@ class GestureStabilizer {
       counts[g] = (counts[g] || 0) + 1;
     }
 
-    const threshold = Math.ceil(this.windowSize * 0.6); // 60% agreement
-    for (const [gesture, count] of Object.entries(counts)) {
-      if (count >= threshold) return gesture;
+    // 50% majority (down from 60%)
+    const threshold = Math.ceil(this.windowSize * 0.5);
+    for (const [g, count] of Object.entries(counts)) {
+      if (count >= threshold) {
+        this.lastEmitted = g;
+        return g;
+      }
     }
 
     return null;
@@ -220,140 +251,201 @@ class GestureStabilizer {
 
   clear() {
     this.buffer = [];
+    this.lastEmitted = null;
   }
 }
 
-// ── Gesture Classification (expanded — 25+ gestures) ─────────
+// ── Geometry Helpers (rotation-invariant) ─────────────────────
 
 function dist(a: HandLandmark, b: HandLandmark): number {
   return Math.hypot(a.x - b.x, a.y - b.y, (a.z ?? 0) - (b.z ?? 0));
 }
 
-function classifyGesture(landmarks: HandLandmark[]): { gesture: string; confidence: number } {
+/** Compute angle (degrees) at vertex B given triangle A-B-C */
+function angleDeg(a: HandLandmark, b: HandLandmark, c: HandLandmark): number {
+  const ba = { x: a.x - b.x, y: a.y - b.y, z: (a.z ?? 0) - (b.z ?? 0) };
+  const bc = { x: c.x - b.x, y: c.y - b.y, z: (c.z ?? 0) - (b.z ?? 0) };
+  const dot = ba.x * bc.x + ba.y * bc.y + ba.z * bc.z;
+  const magBA = Math.hypot(ba.x, ba.y, ba.z);
+  const magBC = Math.hypot(bc.x, bc.y, bc.z);
+  if (magBA < 1e-8 || magBC < 1e-8) return 0;
+  const cosAngle = Math.max(-1, Math.min(1, dot / (magBA * magBC)));
+  return Math.acos(cosAngle) * (180 / Math.PI);
+}
+
+/**
+ * Determine if a finger is extended using the angle at PIP joint.
+ * Straight finger ≈ 180°, curled finger ≈ 60-90°.
+ * Threshold: > 155° = extended (works regardless of hand orientation).
+ */
+function isFingerExtended(
+  landmarks: HandLandmark[],
+  mcp: number,
+  pip: number,
+  dip: number,
+  tip: number,
+): boolean {
+  const pipAngle = angleDeg(landmarks[mcp], landmarks[pip], landmarks[dip]);
+  const dipAngle = angleDeg(landmarks[pip], landmarks[dip], landmarks[tip]);
+  // Both joints need to be relatively straight
+  return pipAngle > 155 && dipAngle > 140;
+}
+
+/**
+ * Determine if thumb is extended using abduction from palm.
+ * Uses angle at CMC (landmark 2) with wrist and MCP as reference,
+ * plus tip-to-index_mcp distance relative to palm size.
+ * Works for both left and right hands.
+ */
+function isThumbExtended(landmarks: HandLandmark[], palmSize: number): boolean {
+  // Angle at MCP joint (landmark 2): wrist(0) - thumb_mcp(2) - thumb_ip(3)
+  const mcpAngle = angleDeg(landmarks[0], landmarks[2], landmarks[3]);
+  // Angle at IP joint: thumb_mcp(2) - thumb_ip(3) - thumb_tip(4)
+  const ipAngle = angleDeg(landmarks[2], landmarks[3], landmarks[4]);
+
+  // Distance from thumb tip to index MCP (relative to palm)
+  const thumbAbduction = dist(landmarks[4], landmarks[5]) / (palmSize || 0.001);
+
+  // Thumb is extended if the joints aren't tightly curled AND it's abducted from the palm
+  return (mcpAngle > 120 || ipAngle > 140) && thumbAbduction > 0.7;
+}
+
+// ── Gesture Classification (rotation-invariant, angle-based) ──
+
+function classifyGesture(landmarks: HandLandmark[]): { gesture: string | null; confidence: number } {
   if (!landmarks || landmarks.length < 21) {
-    return { gesture: 'UNKNOWN', confidence: 0 };
+    return { gesture: null, confidence: 0 };
   }
 
-  const tips = [4, 8, 12, 16, 20];
-  const pips = [3, 6, 10, 14, 18];
-  const mcps = [2, 5, 9, 13, 17];
   const wrist = landmarks[0];
+  const palmSize = dist(wrist, landmarks[9]); // wrist to middle MCP
 
-  // Extended finger detection
-  const fingerStates: boolean[] = [];
-  for (let i = 0; i < 5; i++) {
-    if (i === 0) {
-      fingerStates.push(Math.abs(landmarks[tips[i]].x - landmarks[mcps[i]].x) > 0.04);
-    } else {
-      fingerStates.push(landmarks[tips[i]].y < landmarks[pips[i]].y);
-    }
+  // Guard: hand too small / too far → unreliable
+  if (palmSize < 0.01) {
+    return { gesture: null, confidence: 0 };
   }
 
-  const [thumb, index, middle, ring, pinky] = fingerStates;
+  // ── Finger state detection (angle-based, orientation-independent) ──
+  const thumb = isThumbExtended(landmarks, palmSize);
+  const index = isFingerExtended(landmarks, 5, 6, 7, 8);
+  const middle = isFingerExtended(landmarks, 9, 10, 11, 12);
+  const ring = isFingerExtended(landmarks, 13, 14, 15, 16);
+  const pinky = isFingerExtended(landmarks, 17, 18, 19, 20);
+
+  const fingerStates = [thumb, index, middle, ring, pinky];
   const extendedCount = fingerStates.filter(Boolean).length;
-  const thumbIndexDist = dist(landmarks[4], landmarks[8]);
-  const indexMiddleDist = dist(landmarks[8], landmarks[12]);
-  const palmSize = dist(wrist, landmarks[9]);
+
+  // Palm-relative distances (scale-invariant)
+  const thumbIndexDist = dist(landmarks[4], landmarks[8]) / palmSize;
+  const indexMiddleDist = dist(landmarks[8], landmarks[12]) / palmSize;
+  const indexPinkyDist = dist(landmarks[8], landmarks[20]) / palmSize;
+
+  // Thumb tip direction relative to thumb MCP (for thumbs up/down detection)
+  // Using wrist-relative vertical: compare thumb tip to thumb CMC
+  const thumbVertical = landmarks[2].y - landmarks[4].y; // positive = tip above CMC
 
   // ── Specific gesture patterns (ordered by specificity) ──
 
-  // A (fist with thumb to side)
-  if (!index && !middle && !ring && !pinky && thumb && landmarks[4].x < landmarks[3].x) {
-    return { gesture: 'LETTER_A', confidence: 0.85 };
+  // LETTER_A: fist with thumb to the side (thumb extended, all others curled)
+  if (!index && !middle && !ring && !pinky && thumb) {
+    // Check thumb tip is roughly beside the fist, not above/below
+    const thumbIPAngle = angleDeg(landmarks[2], landmarks[3], landmarks[4]);
+    if (thumbIPAngle > 130 && Math.abs(thumbVertical) < palmSize * 0.5) {
+      return { gesture: 'LETTER_A', confidence: 0.87 };
+    }
   }
 
-  // Thumbs up / down
+  // THUMBS_UP / THUMBS_DOWN: only thumb extended
   if (thumb && !index && !middle && !ring && !pinky) {
-    if (landmarks[4].y < landmarks[2].y) {
-      return { gesture: 'THUMBS_UP', confidence: 0.91 };
+    if (thumbVertical > palmSize * 0.2) {
+      return { gesture: 'THUMBS_UP', confidence: 0.93 };
     }
-    return { gesture: 'THUMBS_DOWN', confidence: 0.87 };
+    if (thumbVertical < -palmSize * 0.2) {
+      return { gesture: 'THUMBS_DOWN', confidence: 0.90 };
+    }
+    // Thumb to the side → still a thumb gesture
+    return { gesture: 'THUMBS_UP', confidence: 0.82 };
   }
 
-  // OK sign: thumb+index circle, others extended
-  if (thumbIndexDist < 0.04 && middle && ring) {
-    return { gesture: 'OK_SIGN', confidence: 0.89 };
+  // OK_SIGN: thumb+index tips close, other fingers extended
+  if (thumbIndexDist < 0.35 && middle && ring) {
+    return { gesture: 'OK_SIGN', confidence: 0.91 };
   }
 
-  // Pinch (thumb+index close, others curled)
-  if (thumbIndexDist < 0.04 && !middle && !ring && !pinky) {
-    return { gesture: 'PINCH', confidence: 0.86 };
+  // PINCH: thumb+index close, others curled
+  if (thumbIndexDist < 0.35 && !middle && !ring && !pinky) {
+    return { gesture: 'PINCH', confidence: 0.88 };
   }
 
-  // ILY (I Love You): thumb + index + pinky
+  // I_LOVE_YOU: thumb + index + pinky (ASL ILY)
   if (thumb && index && !middle && !ring && pinky) {
-    return { gesture: 'I_LOVE_YOU', confidence: 0.88 };
+    return { gesture: 'I_LOVE_YOU', confidence: 0.90 };
   }
 
-  // Rock on / horns: index + pinky, no thumb
+  // HORNS: index + pinky, no thumb
   if (!thumb && index && !middle && !ring && pinky) {
-    return { gesture: 'HORNS', confidence: 0.84 };
+    return { gesture: 'HORNS', confidence: 0.87 };
   }
 
-  // Call me: thumb + pinky
+  // CALL_ME: thumb + pinky only
   if (thumb && !index && !middle && !ring && pinky) {
-    return { gesture: 'CALL_ME', confidence: 0.86 };
+    return { gesture: 'CALL_ME', confidence: 0.88 };
   }
 
-  // Point: only index extended
+  // POINT: only index extended
   if (!thumb && index && !middle && !ring && !pinky) {
-    // Determine direction
-    const indexAngle = Math.atan2(
-      landmarks[8].y - landmarks[5].y,
-      landmarks[8].x - landmarks[5].x
-    ) * (180 / Math.PI);
-    if (indexAngle < -60) return { gesture: 'POINT_UP', confidence: 0.90 };
-    if (indexAngle > 60) return { gesture: 'POINT_DOWN', confidence: 0.88 };
-    return { gesture: 'POINT', confidence: 0.91 };
+    // Direction from index MCP to tip (rotation-aware)
+    const dx = landmarks[8].x - landmarks[5].x;
+    const dy = landmarks[8].y - landmarks[5].y;
+    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+    if (angle < -60) return { gesture: 'POINT_UP', confidence: 0.92 };
+    if (angle > 60) return { gesture: 'POINT_DOWN', confidence: 0.90 };
+    return { gesture: 'POINT', confidence: 0.92 };
   }
 
-  // Peace / V sign
+  // PEACE / V / TWO: index + middle extended
   if (index && middle && !ring && !pinky) {
-    if (indexMiddleDist > 0.06) {
-      return { gesture: 'PEACE', confidence: 0.90 };
+    if (indexMiddleDist > 0.45) {
+      return { gesture: 'PEACE', confidence: 0.92 };
     }
-    return { gesture: 'TWO', confidence: 0.85 };
+    return { gesture: 'TWO', confidence: 0.87 };
   }
 
-  // Three fingers
+  // THREE: index + middle + ring
   if (index && middle && ring && !pinky && !thumb) {
-    return { gesture: 'THREE', confidence: 0.86 };
+    return { gesture: 'THREE', confidence: 0.88 };
   }
 
-  // Four fingers
+  // FOUR: all fingers except thumb
   if (index && middle && ring && pinky && !thumb) {
-    return { gesture: 'FOUR', confidence: 0.87 };
+    return { gesture: 'FOUR', confidence: 0.89 };
   }
 
-  // Open palm / stop
+  // OPEN_PALM / HELLO: all five extended
   if (extendedCount === 5) {
-    // Check if fingers are spread wide
-    const spread = dist(landmarks[8], landmarks[20]);
-    if (spread > palmSize * 1.2) {
-      return { gesture: 'OPEN_PALM', confidence: 0.92 };
+    if (indexPinkyDist > palmSize * 0.8) {
+      return { gesture: 'OPEN_PALM', confidence: 0.93 };
     }
-    return { gesture: 'HELLO', confidence: 0.88 };
+    return { gesture: 'HELLO', confidence: 0.90 };
   }
 
-  // Fist
+  // FIST: everything curled
   if (extendedCount === 0) {
-    return { gesture: 'FIST', confidence: 0.90 };
+    return { gesture: 'FIST', confidence: 0.92 };
   }
 
-  // Middle finger + thumb = "money" / snap position
+  // SNAP: thumb + middle only
   if (thumb && !index && middle && !ring && !pinky) {
-    return { gesture: 'SNAP', confidence: 0.82 };
+    return { gesture: 'SNAP', confidence: 0.84 };
   }
 
-  // Thumb + index + middle = "3 with thumb"
+  // W_SIGN: thumb + index + middle
   if (thumb && index && middle && !ring && !pinky) {
-    return { gesture: 'W_SIGN', confidence: 0.83 };
+    return { gesture: 'W_SIGN', confidence: 0.85 };
   }
 
-  return {
-    gesture: 'UNKNOWN',
-    confidence: 0.60,
-  };
+  // No confident match — return null (NOT "UNKNOWN" at 0.6)
+  return { gesture: null, confidence: 0 };
 }
 
 // ── The Hook ────────────────────────────────────────────────
@@ -512,10 +604,13 @@ export function useMediaPipe({
 
           if (landmarks.length > 0) {
             const classification = classifyGesture(landmarks[0]);
-            // Stabilize gesture (reduces jitter on all devices)
-            const stable = stabilizerRef.current.push(classification.gesture);
-            gesture = stable;
-            confidence = classification.confidence;
+            // Skip null classifications (no confident match)
+            if (classification.gesture !== null) {
+              // Stabilize gesture — pass confidence for high-confidence bypass
+              const stable = stabilizerRef.current.push(classification.gesture, classification.confidence);
+              gesture = stable;
+              confidence = classification.confidence;
+            }
           }
 
           const trackingResult: HandTrackingResult = {

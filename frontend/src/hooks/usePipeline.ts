@@ -29,8 +29,8 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL || '';
 if (!process.env.NEXT_PUBLIC_WS_URL) {
   console.error("CRITICAL ERROR: NEXT_PUBLIC_WS_URL is missing.");
 }
-const GESTURE_DEBOUNCE_MS = 800;   // Fast response on all devices
-const GESTURE_CONFIDENCE_THRESHOLD = 0.75;
+const GESTURE_DEBOUNCE_MS = 300;   // Reduced from 800ms — allows rapid sequences
+const GESTURE_CONFIDENCE_THRESHOLD = 0.70;  // Aligned with backend classifier threshold
 
 // ── Pipeline State ──────────────────────────────────────────
 
@@ -78,7 +78,9 @@ export function usePipeline(): PipelineState & PipelineActions {
 
   const lastGestureTime = useRef(0);
   const gestureBuffer = useRef<string[]>([]);
-  const gestureFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const silenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const maxAgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bufferStartTime = useRef<number>(0);
 
   const addLog = useCallback((source: LogEntry['source'], text: string) => {
     setLogs((prev) => [...prev, createLogEntry(source, text)]);
@@ -227,6 +229,28 @@ export function usePipeline(): PipelineState & PipelineActions {
 
   // ── Gesture Processing (SIGN_TO_SPEECH pipeline) ──────────
 
+  /** Flush the gesture buffer → send sequence to backend */
+  const flushGestureBuffer = useCallback(() => {
+    if (gestureBuffer.current.length === 0) return;
+
+    const sequence = [...gestureBuffer.current];
+    gestureBuffer.current = [];
+    bufferStartTime.current = 0;
+
+    // Clear both timers
+    if (silenceTimer.current) { clearTimeout(silenceTimer.current); silenceTimer.current = null; }
+    if (maxAgeTimer.current) { clearTimeout(maxAgeTimer.current); maxAgeTimer.current = null; }
+
+    addLog('SYSTEM', `[SENDING SEQUENCE]: ${sequence.join(' → ')}`);
+    setIsProcessing(true);
+
+    wsSend('gesture_sequence', {
+      gestures: sequence,
+      mode: 'SIGN_TO_SPEECH',
+      timestamp: Date.now(),
+    });
+  }, [wsSend, addLog]);
+
   const processGestureResult = useCallback(
     (result: HandTrackingResult) => {
       if (!isActive || mode !== 'SIGN_TO_SPEECH') return;
@@ -237,36 +261,34 @@ export function usePipeline(): PipelineState & PipelineActions {
       const now = Date.now();
       if (now - lastGestureTime.current < GESTURE_DEBOUNCE_MS) return;
 
-      // Buffer gestures for sentence construction
+      // ── Duplicate suppression: skip if same as last buffered gesture ──
+      const lastBuffered = gestureBuffer.current[gestureBuffer.current.length - 1];
+      if (result.gesture === lastBuffered) return;
+
+      // Buffer the new gesture
       gestureBuffer.current.push(result.gesture);
       setLastGesture(result.gesture);
       lastGestureTime.current = now;
 
       addLog('USER', `[GESTURE DETECTED]: "${result.gesture}" (conf: ${(result.confidence * 100).toFixed(1)}%)`);
 
-      // Flush buffer after a pause (send accumulated gestures as a sequence)
-      if (gestureFlushTimer.current) {
-        clearTimeout(gestureFlushTimer.current);
+      // ── Max-age timer: set ONCE when buffer starts, never resets ──
+      if (bufferStartTime.current === 0) {
+        bufferStartTime.current = now;
+        maxAgeTimer.current = setTimeout(() => {
+          flushGestureBuffer();
+        }, 2000); // 2s max buffer age — force flush
       }
 
-      gestureFlushTimer.current = setTimeout(() => {
-        if (gestureBuffer.current.length > 0) {
-          const sequence = [...gestureBuffer.current];
-          gestureBuffer.current = [];
-
-          addLog('SYSTEM', `[SENDING SEQUENCE]: ${sequence.join(' → ')}`);
-          setIsProcessing(true);
-
-          // Send gesture sequence to backend for grammar processing
-          wsSend('gesture_sequence', {
-            gestures: sequence,
-            mode: 'SIGN_TO_SPEECH',
-            timestamp: Date.now(),
-          });
-        }
-      }, 1200); // 1.2s of no new gestures = flush (was 2s — faster for all devices)
+      // ── Silence timer: resets on every new gesture (1.2s of quiet → flush) ──
+      if (silenceTimer.current) {
+        clearTimeout(silenceTimer.current);
+      }
+      silenceTimer.current = setTimeout(() => {
+        flushGestureBuffer();
+      }, 1200);
     },
-    [isActive, mode, wsSend, addLog]
+    [isActive, mode, addLog, flushGestureBuffer]
   );
 
   // ── Pipeline Control ──────────────────────────────────────
@@ -300,11 +322,11 @@ export function usePipeline(): PipelineState & PipelineActions {
     wsDisconnect();
     stopListening();
 
-    // Clear buffers
+    // Clear buffers and timers
     gestureBuffer.current = [];
-    if (gestureFlushTimer.current) {
-      clearTimeout(gestureFlushTimer.current);
-    }
+    bufferStartTime.current = 0;
+    if (silenceTimer.current) { clearTimeout(silenceTimer.current); silenceTimer.current = null; }
+    if (maxAgeTimer.current) { clearTimeout(maxAgeTimer.current); maxAgeTimer.current = null; }
 
     setFps(0);
     setIsProcessing(false);
